@@ -181,6 +181,14 @@ func (p providerInfo) secretLabel() string {
 	return firstNonEmpty(p.SecretLabel, "Email password or app password")
 }
 
+func (p providerInfo) normalizeSecret(secret string) string {
+	secret = strings.TrimSpace(secret)
+	if p.Name == "Gmail" {
+		return strings.Join(strings.Fields(secret), "")
+	}
+	return secret
+}
+
 func standardFolders() map[string]string {
 	return map[string]string{
 		"inbox":  "INBOX",

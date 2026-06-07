@@ -327,7 +327,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if strings.TrimSpace(m.setupProvider.Name) == "" && validEmailAddress(m.setupEmail) {
 					m.setupProvider = detectProvider(m.setupEmail)
 				}
-				return m.withStatus(msg.err.Error()), nil
+				status := msg.err.Error()
+				if m.setupStep == setupSecretStep {
+					status = "paste your " + strings.ToLower(m.setupProvider.secretLabel()) + ", not your email address"
+				}
+				return m.withStatus(status), nil
 			}
 			m.status = msg.err.Error()
 			m.messages = nil
@@ -617,6 +621,18 @@ func (m model) updateSetupSecret(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+u":
 		m.setupSecret = ""
 		return m.withStatus("password cleared"), nil
+	case "ctrl+o":
+		provider := m.setupProvider
+		if provider.Name == "" {
+			provider = detectProvider(m.setupEmail)
+		}
+		if strings.TrimSpace(provider.HelpURL) == "" {
+			return m.withStatus("no browser setup link for " + provider.Name), nil
+		}
+		m.status = "opening " + provider.Name + " setup in your browser..."
+		return m, func() tea.Msg {
+			return providerHelpOpenedMsg{provider: provider.Name, err: openURL(provider.HelpURL)}
+		}
 	}
 
 	if len(msg.Runes) > 0 {
@@ -869,17 +885,21 @@ func (m model) renderSetupSecret(width, height int) string {
 		styles.readerHeader.Width(width).Render("Account name: " + m.setupAccount),
 		"",
 	}
-	lines = append(lines, styledLines(wrapText("Paste your "+provider.secretLabel()+". clibox will save it to macOS Keychain, write Himalaya's IMAP/SMTP config, and reload your inbox.", width-2), styles.readerBody, width)...)
+	prompt := "Paste your " + provider.secretLabel() + ". clibox will save it to macOS Keychain, write Himalaya's IMAP/SMTP config, and reload your inbox."
+	if provider.Name == "Gmail" {
+		prompt = "Paste the 16-character Google app password, not your Gmail address or normal Google password. clibox will save it to macOS Keychain, write Himalaya's IMAP/SMTP config, and reload your inbox."
+	}
+	lines = append(lines, styledLines(wrapText(prompt, width-2), styles.readerBody, width)...)
 	if provider.HelpURL != "" {
 		lines = append(lines, "")
-		lines = append(lines, styles.readerBody.Width(width).Render("o opens "+provider.HelpLabel+" from the previous screen. Esc returns."))
+		lines = append(lines, styles.readerBody.Width(width).Render("Ctrl+O opens "+provider.HelpLabel+" in your browser. Esc returns."))
 	}
 	lines = append(lines,
 		"",
 		styles.readerHeader.Width(width).Render(provider.secretLabel()),
 		styles.selected.Width(min(width, max(30, lipgloss.Width(mask)+2))).Render(" "+mask),
 		"",
-		styles.readerBody.Width(width).Render("Enter saves setup. Ctrl+U clears. Esc returns."),
+		styles.readerBody.Width(width).Render("Enter saves setup. Ctrl+O opens help. Ctrl+U clears. Esc returns."),
 	)
 	return fitHeight(strings.Join(lines, "\n"), height)
 }

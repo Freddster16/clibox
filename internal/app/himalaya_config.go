@@ -32,7 +32,7 @@ func (h himalayaBackend) SaveAccountSetup(setup accountSetup) error {
 	setup.Account = sanitizeAccountName(setup.Account, "")
 	setup.Email = strings.TrimSpace(setup.Email)
 	setup.DisplayName = firstNonEmpty(setup.DisplayName, displayNameFromEmail(setup.Email))
-	setup.Secret = strings.TrimSpace(setup.Secret)
+	setup.Secret = setup.Provider.normalizeSecret(setup.Secret)
 	if setup.Account == "" {
 		return errors.New("missing account name")
 	}

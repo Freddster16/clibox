@@ -134,7 +134,8 @@ clibox
 # clibox detects providers like Gmail, iCloud, Outlook, Yahoo, Fastmail,
 # and Proton Mail.
 
-# 3. Press o on the review screen to open the provider setup page in your browser.
+# 3. Press o on the review screen, or Ctrl+O on the password screen,
+# to open the provider setup page in your browser.
 
 # 4. Press Enter on the review screen, then paste the password/app password.
 # clibox writes Himalaya's IMAP/SMTP config and saves the secret to Keychain.

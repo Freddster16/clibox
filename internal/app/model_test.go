@@ -215,6 +215,24 @@ func TestSecretStepStartsBackgroundSetup(t *testing.T) {
 	}
 }
 
+func TestSecretStepCanOpenProviderHelp(t *testing.T) {
+	m := NewWithOptions(Options{backend: &configurableBackend{}})
+	m.mode = setupView
+	m.setupStep = setupSecretStep
+	m.setupEmail = "freddy@gmail.com"
+	m.setupProvider = detectProvider(m.setupEmail)
+	m.setupAccount = "gmail"
+
+	next, cmd := m.Update(keyMsg("ctrl+o"))
+	updated := next.(model)
+	if cmd == nil {
+		t.Fatal("expected ctrl+o to return browser open command")
+	}
+	if !strings.Contains(updated.status, "opening Gmail setup") {
+		t.Fatalf("expected opening status, got %q", updated.status)
+	}
+}
+
 func TestAccountSetupCanEditAccountName(t *testing.T) {
 	m := NewWithOptions(Options{backend: &configurableBackend{}})
 	m.mode = setupView
@@ -447,6 +465,14 @@ func TestProviderDetectionGivesFriendlyGuidance(t *testing.T) {
 	}
 }
 
+func TestGmailSecretNormalizationRemovesSpaces(t *testing.T) {
+	provider := detectProvider("freddy@gmail.com")
+	got := provider.normalizeSecret(" abcd efgh ijkl mnop ")
+	if got != "abcdefghijklmnop" {
+		t.Fatalf("expected Gmail app password spaces to be removed, got %q", got)
+	}
+}
+
 func TestValidEmailAddress(t *testing.T) {
 	for _, email := range []string{"freddy@gmail.com", "work@example.co"} {
 		if !validEmailAddress(email) {
@@ -537,6 +563,10 @@ func keyMsg(key string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyBackspace}
 	case "delete":
 		return tea.KeyMsg{Type: tea.KeyDelete}
+	case "ctrl+o":
+		return tea.KeyMsg{Type: tea.KeyCtrlO}
+	case "ctrl+u":
+		return tea.KeyMsg{Type: tea.KeyCtrlU}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	}
