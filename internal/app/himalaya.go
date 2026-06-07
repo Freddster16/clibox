@@ -327,6 +327,9 @@ func describeHimalayaFailure(failure commandFailure) error {
 		return errors.New("Himalaya is not installed or not on PATH. Install and configure Himalaya, then run clibox again")
 	}
 	output := firstNonEmpty(failure.output(), failure.err.Error())
+	if looksLikeSetupPromptError(output) {
+		return errors.New("Himalaya is installed but not configured yet. Run `himalaya account configure` in your terminal, finish the interactive email setup, then run `clibox doctor`")
+	}
 	return fmt.Errorf("%s failed: %s", shellCommand(failure.program, failure.args), oneLine(output))
 }
 
@@ -337,6 +340,22 @@ func (f commandFailure) output() string {
 func looksLikeCommandShapeError(output string) bool {
 	output = strings.ToLower(output)
 	for _, needle := range []string{"unrecognized subcommand", "unrecognized option", "unexpected argument", "unknown command", "invalid subcommand", "did you mean"} {
+		if strings.Contains(output, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeSetupPromptError(output string) bool {
+	output = strings.ToLower(output)
+	for _, needle := range []string{
+		"would you like to create",
+		"cannot prompt",
+		"account configure",
+		"configuration file",
+		"no configuration",
+	} {
 		if strings.Contains(output, needle) {
 			return true
 		}

@@ -48,6 +48,9 @@ go run .
 
 Phase 2 requires Himalaya for real inbox data. If Himalaya is missing or not yet
 configured, `clibox` shows a setup error in the footer instead of crashing.
+If you see a setup message, run `himalaya account configure` directly in your
+terminal first; Himalaya's account wizard is interactive and cannot be answered
+from inside the `clibox` TUI.
 
 If you already installed `clibox` and want the latest UI changes:
 
@@ -112,17 +115,20 @@ IMAP/JMAP/SMTP, message envelopes, folders, authentication, and sending.
 Flow:
 
 ```sh
-# 1. Install and configure Himalaya first.
-himalaya
+# 1. Configure Himalaya interactively first.
+himalaya account configure
 
-# 2. Start the TUI.
+# 2. Verify Himalaya can read your inbox.
+himalaya envelope list --output json --page-size 5 --folder INBOX
+
+# 3. Start the TUI.
 clibox
 
-# 3. Optionally choose account or mailbox at launch.
+# 4. Optionally choose account or mailbox at launch.
 clibox --account personal
 clibox --mailbox INBOX
 
-# 4. Check local setup.
+# 5. Check local setup without opening the TUI.
 clibox doctor
 ```
 

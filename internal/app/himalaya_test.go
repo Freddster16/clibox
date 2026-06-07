@@ -156,6 +156,31 @@ func TestHimalayaBackendDoesNotFallbackOnRuntimeFailure(t *testing.T) {
 	}
 }
 
+func TestHimalayaBackendExplainsSetupPromptFailure(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stderr: []byte("? Would you like to create one with the wizard? Error: 0: cannot prompt boolean 1: IO error"),
+			err:    errors.New("exit status 1"),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:   "himalaya",
+		mailbox:  "INBOX",
+		pageSize: 10,
+		runner:   runner,
+	}
+
+	_, err := backend.ListEnvelopes(context.Background())
+	if err == nil {
+		t.Fatal("expected setup prompt failure")
+	}
+	for _, want := range []string{"not configured", "himalaya account configure", "clibox doctor"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected setup guidance to contain %q, got %q", want, err)
+		}
+	}
+}
+
 type fakeCommandRunner struct {
 	results []fakeCommandResult
 	calls   []string
