@@ -69,8 +69,9 @@ The first run should be boring in the best way:
 
 ## Themes
 
-`clibox` ships with three terminal-friendly color themes: Nocturne, Copper, and
-Lagoon. Press `t` inside the TUI to cycle between them.
+`clibox` ships with three vivid terminal themes: Nocturne, Ember, and Lagoon.
+They color the header, rows, reader, help panel, and footer so each theme feels
+distinct. Press `t` inside the TUI to cycle between them.
 
 To start with a specific theme:
 

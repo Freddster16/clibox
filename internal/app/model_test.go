@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -108,6 +109,33 @@ func TestThemeCanBeSelectedFromEnvironment(t *testing.T) {
 	m := New()
 	if got := m.activeTheme().name; got != "Lagoon" {
 		t.Fatalf("expected CLIBOX_THEME to select Lagoon, got %q", got)
+	}
+}
+
+func TestCopperThemeAliasSelectsEmber(t *testing.T) {
+	t.Setenv("CLIBOX_THEME", "copper")
+
+	m := New()
+	if got := m.activeTheme().name; got != "Ember" {
+		t.Fatalf("expected copper alias to select Ember, got %q", got)
+	}
+}
+
+func TestThemesHaveDistinctVisibleSurfaces(t *testing.T) {
+	seen := map[string]string{}
+	for _, theme := range appThemes {
+		signature := strings.Join([]string{
+			theme.palette.background,
+			theme.palette.header,
+			theme.palette.surface,
+			theme.palette.surfaceAlt,
+			theme.palette.selected,
+			theme.palette.footer,
+		}, "|")
+		if previous, ok := seen[signature]; ok {
+			t.Fatalf("expected %s theme to differ from %s", theme.name, previous)
+		}
+		seen[signature] = theme.name
 	}
 }
 

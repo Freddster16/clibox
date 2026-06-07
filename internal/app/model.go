@@ -28,7 +28,10 @@ type model struct {
 }
 
 type styles struct {
+	screen       lipgloss.Style
+	header       lipgloss.Style
 	row          lipgloss.Style
+	rowAlt       lipgloss.Style
 	title        lipgloss.Style
 	subtitle     lipgloss.Style
 	panelTitle   lipgloss.Style
@@ -38,76 +41,113 @@ type styles struct {
 	footer       lipgloss.Style
 	helpPanel    lipgloss.Style
 	readerHeader lipgloss.Style
+	readerBody   lipgloss.Style
 	themeBadge   lipgloss.Style
 }
 
 type appTheme struct {
-	name   string
-	styles styles
+	name    string
+	palette palette
+	styles  styles
 }
 
 type palette struct {
-	accent       string
-	accentText   string
-	accentSoft   string
-	background   string
-	surface      string
-	text         string
-	muted        string
-	selected     string
-	selectedText string
-	unread       string
-	border       string
+	background     string
+	header         string
+	surface        string
+	surfaceAlt     string
+	accent         string
+	accentText     string
+	accentSoft     string
+	text           string
+	muted          string
+	selected       string
+	selectedText   string
+	unread         string
+	border         string
+	footer         string
+	footerText     string
+	readerHeader   string
+	readerHeaderFg string
 }
 
 var appThemes = []appTheme{
 	newTheme("Nocturne", palette{
-		accent:       "39",
-		accentText:   "230",
-		accentSoft:   "219",
-		background:   "234",
-		surface:      "236",
-		text:         "252",
-		muted:        "245",
-		selected:     "24",
-		selectedText: "230",
-		unread:       "159",
-		border:       "63",
+		background:     "#09090f",
+		header:         "#312e81",
+		surface:        "#111827",
+		surfaceAlt:     "#0f172a",
+		accent:         "#d946ef",
+		accentText:     "#fdf4ff",
+		accentSoft:     "#67e8f9",
+		text:           "#f8fafc",
+		muted:          "#94a3b8",
+		selected:       "#7c3aed",
+		selectedText:   "#ffffff",
+		unread:         "#a7f3d0",
+		border:         "#22d3ee",
+		footer:         "#1e1b4b",
+		footerText:     "#e0e7ff",
+		readerHeader:   "#3730a3",
+		readerHeaderFg: "#eef2ff",
 	}),
-	newTheme("Copper", palette{
-		accent:       "166",
-		accentText:   "230",
-		accentSoft:   "222",
-		background:   "234",
-		surface:      "235",
-		text:         "252",
-		muted:        "246",
-		selected:     "94",
-		selectedText: "230",
-		unread:       "209",
-		border:       "130",
+	newTheme("Ember", palette{
+		background:     "#120b07",
+		header:         "#7c2d12",
+		surface:        "#26150d",
+		surfaceAlt:     "#321a0f",
+		accent:         "#fb923c",
+		accentText:     "#1c0a00",
+		accentSoft:     "#facc15",
+		text:           "#fff7ed",
+		muted:          "#d6a57e",
+		selected:       "#f97316",
+		selectedText:   "#1c0a00",
+		unread:         "#fdba74",
+		border:         "#ea580c",
+		footer:         "#431407",
+		footerText:     "#ffedd5",
+		readerHeader:   "#9a3412",
+		readerHeaderFg: "#fff7ed",
 	}),
 	newTheme("Lagoon", palette{
-		accent:       "37",
-		accentText:   "230",
-		accentSoft:   "121",
-		background:   "234",
-		surface:      "236",
-		text:         "252",
-		muted:        "245",
-		selected:     "29",
-		selectedText: "230",
-		unread:       "123",
-		border:       "74",
+		background:     "#031b1f",
+		header:         "#155e75",
+		surface:        "#07343a",
+		surfaceAlt:     "#092d33",
+		accent:         "#2dd4bf",
+		accentText:     "#042f2e",
+		accentSoft:     "#a7f3d0",
+		text:           "#ecfeff",
+		muted:          "#8fc8d1",
+		selected:       "#14b8a6",
+		selectedText:   "#042f2e",
+		unread:         "#5eead4",
+		border:         "#06b6d4",
+		footer:         "#083344",
+		footerText:     "#cffafe",
+		readerHeader:   "#0f766e",
+		readerHeaderFg: "#ecfeff",
 	}),
 }
 
 func newTheme(name string, p palette) appTheme {
 	return appTheme{
-		name: name,
+		name:    name,
+		palette: p,
 		styles: styles{
+			screen: lipgloss.NewStyle().
+				Foreground(lipgloss.Color(p.text)).
+				Background(lipgloss.Color(p.background)),
+			header: lipgloss.NewStyle().
+				Foreground(lipgloss.Color(p.text)).
+				Background(lipgloss.Color(p.header)),
 			row: lipgloss.NewStyle().
-				Foreground(lipgloss.Color(p.text)),
+				Foreground(lipgloss.Color(p.text)).
+				Background(lipgloss.Color(p.surface)),
+			rowAlt: lipgloss.NewStyle().
+				Foreground(lipgloss.Color(p.text)).
+				Background(lipgloss.Color(p.surfaceAlt)),
 			title: lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color(p.accentText)).
@@ -124,27 +164,33 @@ func newTheme(name string, p palette) appTheme {
 				Background(lipgloss.Color(p.selected)),
 			unread: lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color(p.unread)),
+				Foreground(lipgloss.Color(p.unread)).
+				Background(lipgloss.Color(p.surfaceAlt)),
 			muted: lipgloss.NewStyle().
 				Foreground(lipgloss.Color(p.muted)),
 			footer: lipgloss.NewStyle().
-				Foreground(lipgloss.Color(p.text)).
-				Background(lipgloss.Color(p.surface)).
+				Bold(true).
+				Foreground(lipgloss.Color(p.footerText)).
+				Background(lipgloss.Color(p.footer)).
 				Padding(0, 1),
 			helpPanel: lipgloss.NewStyle().
 				Foreground(lipgloss.Color(p.text)).
-				Background(lipgloss.Color(p.background)).
+				Background(lipgloss.Color(p.surface)).
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color(p.border)).
 				Padding(1, 2),
 			readerHeader: lipgloss.NewStyle().
-				Foreground(lipgloss.Color(p.text)).
-				Background(lipgloss.Color(p.surface)).
+				Bold(true).
+				Foreground(lipgloss.Color(p.readerHeaderFg)).
+				Background(lipgloss.Color(p.readerHeader)).
 				Padding(0, 1),
+			readerBody: lipgloss.NewStyle().
+				Foreground(lipgloss.Color(p.text)).
+				Background(lipgloss.Color(p.surface)),
 			themeBadge: lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color(p.accentSoft)).
-				Background(lipgloss.Color(p.surface)).
+				Foreground(lipgloss.Color(p.accentText)).
+				Background(lipgloss.Color(p.accent)).
 				Padding(0, 1),
 		},
 	}
@@ -258,7 +304,8 @@ func (m model) renderCurrentView() string {
 		body = m.renderInbox(bodyHeight)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	content := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	return m.activeTheme().styles.screen.Width(m.width).Height(max(1, m.height)).Render(content)
 }
 
 func (m model) renderHeader() string {
@@ -273,7 +320,7 @@ func (m model) renderHeader() string {
 	}
 	left := title + " " + account
 	gap := max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
-	return left + strings.Repeat(" ", gap) + right
+	return styles.header.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
 }
 
 func (m model) renderInbox(height int) string {
@@ -324,13 +371,13 @@ func (m model) renderMailboxRail(width, height int) string {
 	lines := []string{
 		styles.panelTitle.Render("Mailboxes"),
 		styles.selected.Width(width).Render(fmt.Sprintf("> INBOX %7d", len(m.messages))),
-		styles.muted.Render(fmt.Sprintf("  Unread %6d", unread)),
-		"  Archive",
-		"  Sent",
-		"  Drafts",
-		"",
+		styles.rowAlt.Width(width).Render(fmt.Sprintf("  Unread %6d", unread)),
+		styles.row.Width(width).Render("  Archive"),
+		styles.rowAlt.Width(width).Render("  Sent"),
+		styles.row.Width(width).Render("  Drafts"),
+		styles.screen.Width(width).Render(""),
 		styles.panelTitle.Render("Accounts"),
-		"  personal",
+		styles.row.Width(width).Render("  personal"),
 	}
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
@@ -369,13 +416,16 @@ func (m model) renderRows(width, height int) []string {
 		)
 
 		style := styles.row
+		if i%2 == 1 {
+			style = styles.rowAlt
+		}
 		if msg.Unread {
 			style = styles.unread
 		}
 		if i == m.cursor {
 			style = styles.selected.Width(width)
 		}
-		rows = append(rows, style.Render(truncate(line, width)))
+		rows = append(rows, style.Width(width).Render(truncate(line, width)))
 	}
 
 	return rows
@@ -389,9 +439,9 @@ func (m model) renderPreview(width, height int) string {
 		styles.readerHeader.Width(width).Render("From: " + msg.From + " <" + msg.Email + ">"),
 		styles.readerHeader.Width(width).Render("Subject: " + msg.Subject),
 		styles.readerHeader.Width(width).Render("Date: " + msg.Date),
-		"",
+		styles.readerBody.Width(width).Render(""),
 	}
-	lines = append(lines, wrapText(msg.Preview+"\n\n"+msg.Body, width)...)
+	lines = append(lines, styledLines(wrapText(msg.Preview+"\n\n"+msg.Body, width), styles.readerBody, width)...)
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
 
@@ -404,9 +454,9 @@ func (m model) renderReader(height int) string {
 		styles.readerHeader.Width(width).Render("From: " + msg.From + " <" + msg.Email + ">"),
 		styles.readerHeader.Width(width).Render("Subject: " + msg.Subject),
 		styles.readerHeader.Width(width).Render("Date: " + msg.Date),
-		"",
+		styles.readerBody.Width(width).Render(""),
 	}
-	lines = append(lines, wrapText(msg.Body, width-2)...)
+	lines = append(lines, styledLines(wrapText(msg.Body, width-2), styles.readerBody, width)...)
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
 
@@ -489,6 +539,9 @@ func themeIndexFromEnv(value string) int {
 	if value == "" {
 		return 0
 	}
+	if strings.EqualFold(value, "copper") {
+		value = "Ember"
+	}
 	for i, theme := range appThemes {
 		if strings.EqualFold(theme.name, value) {
 			return i
@@ -544,6 +597,14 @@ func fitHeight(value string, height int) string {
 		lines = append(lines, "")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func styledLines(lines []string, style lipgloss.Style, width int) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, style.Width(width).Render(truncate(line, width)))
+	}
+	return out
 }
 
 func truncate(value string, width int) string {
