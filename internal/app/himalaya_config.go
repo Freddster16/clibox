@@ -108,6 +108,41 @@ func writeHimalayaAccountConfig(path string, setup accountSetup, credential cred
 	return nil
 }
 
+func himalayaAccountHint(account string) (accountSetup, bool) {
+	path, err := himalayaConfigPath()
+	if err != nil {
+		return accountSetup{}, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return accountSetup{}, false
+	}
+	content := string(data)
+
+	name := sanitizeAccountName(account, "")
+	if name == "" {
+		name = defaultHimalayaAccountName(content)
+	}
+	if name == "" {
+		return accountSetup{}, false
+	}
+
+	block, ok := accountBlock(content, name)
+	if !ok {
+		return accountSetup{}, false
+	}
+	email := tomlStringField(block, "email")
+	if !validEmailAddress(email) {
+		return accountSetup{}, false
+	}
+	return accountSetup{
+		Account:     name,
+		Email:       email,
+		DisplayName: firstNonEmpty(tomlStringField(block, "display-name"), displayNameFromEmail(email)),
+		Provider:    detectProvider(email),
+	}, true
+}
+
 func buildHimalayaAccountBlock(setup accountSetup, credential credentialRef, defaultAccount bool) string {
 	provider := setup.Provider
 	folders := mergeFolders(provider.Folders)
@@ -200,6 +235,24 @@ func defaultAccountValue(content, account string) bool {
 	return false
 }
 
+func defaultHimalayaAccountName(content string) string {
+	re := regexp.MustCompile(`(?m)^\[accounts\.([^\]]+)\]\s*$`)
+	matches := re.FindAllStringSubmatchIndex(content, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+
+	first := content[matches[0][2]:matches[0][3]]
+	for _, match := range matches {
+		name := content[match[2]:match[3]]
+		block, ok := accountBlock(content, name)
+		if ok && defaultAccountValue(block, name) {
+			return name
+		}
+	}
+	return first
+}
+
 func accountBlock(content, account string) (string, bool) {
 	re := regexp.MustCompile(`(?m)^\[accounts\.` + regexp.QuoteMeta(account) + `\]\s*$`)
 	match := re.FindStringIndex(content)
@@ -289,6 +342,19 @@ func tomlString(value string) string {
 	}
 	out.WriteByte('"')
 	return out.String()
+}
+
+func tomlStringField(content, key string) string {
+	re := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `\s*=\s*("(?:\\.|[^"\\])*")\s*$`)
+	match := re.FindStringSubmatch(content)
+	if len(match) != 2 {
+		return ""
+	}
+	value, err := strconv.Unquote(match[1])
+	if err != nil {
+		return ""
+	}
+	return value
 }
 
 func shellQuote(value string) string {

@@ -96,6 +96,42 @@ email = "work@example.com"
 	}
 }
 
+func TestHimalayaAccountHintReadsDefaultAccount(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "himalaya", "config.toml")
+	t.Setenv("HIMALAYA_CONFIG", path)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("expected config dir to be created: %v", err)
+	}
+	content := `downloads-dir = "~/Downloads"
+
+[accounts.work]
+default = false
+email = "work@example.com"
+
+[accounts.gmail]
+default = true
+email = "freddy.rosa16@gmail.com"
+display-name = "Freddy Rosa"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("expected config write to succeed: %v", err)
+	}
+
+	hint, ok := himalayaAccountHint("")
+	if !ok {
+		t.Fatal("expected account hint")
+	}
+	if hint.Account != "gmail" || hint.Email != "freddy.rosa16@gmail.com" {
+		t.Fatalf("unexpected hint: %+v", hint)
+	}
+	if hint.DisplayName != "Freddy Rosa" {
+		t.Fatalf("expected display name from config, got %q", hint.DisplayName)
+	}
+	if hint.Provider.Name != "Gmail" {
+		t.Fatalf("expected Gmail provider, got %+v", hint.Provider)
+	}
+}
+
 func readFileString(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	return string(data), err

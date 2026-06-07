@@ -119,6 +119,22 @@ func TestSetupRequiredErrorOpensAccountSetupView(t *testing.T) {
 	}
 }
 
+func TestSetupRequiredErrorWithKnownEmailOpensSecretStep(t *testing.T) {
+	m := NewWithOptions(Options{backend: &configurableBackend{}})
+	m.setupEmail = "freddy@gmail.com"
+	m.setupAccount = "gmail"
+	m.setupProvider = detectProvider(m.setupEmail)
+
+	next, _ := m.Update(inboxLoadedMsg{err: setupRequiredError{}})
+	updated := next.(model)
+	if updated.mode != setupView {
+		t.Fatalf("expected setup view, got %v", updated.mode)
+	}
+	if updated.setupStep != setupSecretStep {
+		t.Fatalf("expected setup to start at secret step, got %v", updated.setupStep)
+	}
+}
+
 func TestSetupEmailDetectsProviderAndAccountName(t *testing.T) {
 	m := NewWithOptions(Options{backend: &configurableBackend{}})
 	m.mode = setupView

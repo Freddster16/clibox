@@ -258,13 +258,18 @@ func NewWithOptions(options Options) model {
 	}
 
 	backend := options.backend
+	var hint accountSetup
 	if backend == nil {
 		himalaya := newHimalayaBackend(options)
 		backend = himalaya
 		if options.Mailbox == "" {
 			options.Mailbox = himalaya.mailbox
 		}
+		hint, _ = himalayaAccountHint(himalaya.account)
 	}
+	setupEmail := strings.TrimSpace(hint.Email)
+	setupAccount := firstNonEmpty(options.Account, hint.Account, "personal")
+	setupProvider := hint.Provider
 
 	return model{
 		backend:           backend,
@@ -272,7 +277,9 @@ func NewWithOptions(options Options) model {
 		status:            status,
 		account:           strings.TrimSpace(options.Account),
 		mailbox:           strings.TrimSpace(options.Mailbox),
-		setupAccount:      firstNonEmpty(options.Account, "personal"),
+		setupEmail:        setupEmail,
+		setupAccount:      setupAccount,
+		setupProvider:     setupProvider,
 		setupStep:         setupEmailStep,
 		theme:             index,
 		themeCursor:       index,
@@ -311,8 +318,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.messages = nil
 				m.cursor = 0
 				m.setupStep = setupEmailStep
+				if strings.TrimSpace(m.setupEmail) != "" && m.setupProvider.canAutoConfigure() {
+					m.setupStep = setupSecretStep
+				}
 				if strings.TrimSpace(m.setupAccount) == "" {
 					m.setupAccount = firstNonEmpty(m.account, "personal")
+				}
+				if strings.TrimSpace(m.setupProvider.Name) == "" && validEmailAddress(m.setupEmail) {
+					m.setupProvider = detectProvider(m.setupEmail)
 				}
 				return m.withStatus(msg.err.Error()), nil
 			}

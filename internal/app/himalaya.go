@@ -348,7 +348,7 @@ type setupRequiredError struct {
 }
 
 func (e setupRequiredError) Error() string {
-	return "Himalaya is installed but not configured yet. Type your email address once in clibox so it can detect the provider and configure the account in the background"
+	return "Himalaya is installed but account setup is not finished yet. Open clibox to finish provider setup; if an email is already configured, clibox will continue at the password step"
 }
 
 func isSetupRequiredError(err error) bool {
@@ -378,6 +378,13 @@ func looksLikeSetupPromptError(output string) bool {
 		"account configure",
 		"configuration file",
 		"no configuration",
+		"cannot get imap password",
+		"cannot get smtp password",
+		"cannot get secret from command",
+		"specified item could not be found in the keychain",
+		"cannot authenticate",
+		"authenticationfailed",
+		"invalid credentials",
 	} {
 		if strings.Contains(output, needle) {
 			return true
