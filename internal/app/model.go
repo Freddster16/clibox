@@ -197,10 +197,40 @@ func newTheme(name string, p palette) appTheme {
 }
 
 func New() model {
+	return NewWithTheme("")
+}
+
+func NewWithTheme(name string) model {
+	selected := strings.TrimSpace(name)
+	if selected == "" {
+		selected = os.Getenv("CLIBOX_THEME")
+	}
+
+	index, ok := themeIndex(selected)
+	status := fmt.Sprintf("theme %s active; press t to change", appThemes[index].name)
+	if strings.TrimSpace(selected) != "" && !ok {
+		status = fmt.Sprintf("unknown theme %q; using %s", selected, appThemes[index].name)
+	}
+
 	return model{
 		messages: fakeMessages(),
-		theme:    themeIndexFromEnv(os.Getenv("CLIBOX_THEME")),
+		status:   status,
+		theme:    index,
 	}
+}
+
+func ThemeHelp() string {
+	return fmt.Sprintf(`Available clibox themes:
+  nocturne  violet header, cyan accents, dark blue surfaces
+  ember     orange header, gold accents, warm dark surfaces
+  lagoon    teal header, seafoam accents, deep green surfaces
+
+Start with a theme:
+  clibox --theme lagoon
+
+Inside clibox:
+  press t to cycle themes
+`)
 }
 
 func (m model) Init() tea.Cmd {
@@ -272,7 +302,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.withStatus("refresh arrives when the backend adapter exists"), nil
 		case "t":
 			m.theme = (m.theme + 1) % len(appThemes)
-			return m.withStatus("theme switched to " + m.activeTheme().name), nil
+			return m.withStatus("theme " + m.activeTheme().name + " active; press t for next"), nil
 		}
 	}
 
@@ -311,14 +341,19 @@ func (m model) renderCurrentView() string {
 func (m model) renderHeader() string {
 	theme := m.activeTheme()
 	styles := theme.styles
+	if m.width < 46 {
+		return styles.header.Width(m.width).Render(truncate(fmt.Sprintf("clibox theme:%s", theme.name), m.width))
+	}
+
 	account := styles.subtitle.Render("personal@example.com")
 	count := styles.subtitle.Render(fmt.Sprintf("%d emails", len(m.messages)))
 	title := styles.title.Render("clibox")
+	badge := styles.themeBadge.Render("theme " + theme.name)
+	left := title + " " + badge
 	right := count
-	if m.width >= 72 {
-		right = styles.themeBadge.Render(theme.name) + " " + count
+	if m.width >= 78 {
+		left += " " + account
 	}
-	left := title + " " + account
 	gap := max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
 	return styles.header.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
 }
@@ -332,7 +367,7 @@ func (m model) renderInbox(height int) string {
 	lines := []string{styles.panelTitle.Render("Inbox")}
 	lines = append(lines, m.renderRows(m.width, height-3)...)
 	lines = append(lines, "")
-	lines = append(lines, styles.muted.Render("Enter opens the selected message. Press ? for help."))
+	lines = append(lines, styles.muted.Render(fmt.Sprintf("Theme %s. Press t to change, ? for help.", m.activeTheme().name)))
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
 
@@ -375,6 +410,9 @@ func (m model) renderMailboxRail(width, height int) string {
 		styles.row.Width(width).Render("  Archive"),
 		styles.rowAlt.Width(width).Render("  Sent"),
 		styles.row.Width(width).Render("  Drafts"),
+		styles.screen.Width(width).Render(""),
+		styles.panelTitle.Render("Theme"),
+		styles.themeBadge.Width(width).Render(m.activeTheme().name),
 		styles.screen.Width(width).Render(""),
 		styles.panelTitle.Render("Accounts"),
 		styles.row.Width(width).Render("  personal"),
@@ -462,9 +500,10 @@ func (m model) renderReader(height int) string {
 
 func (m model) renderFooter() string {
 	styles := m.activeTheme().styles
-	hints := "j/k move  enter read  r reply  c compose  a archive  / search  t theme  ? help  q quit"
+	themeHint := fmt.Sprintf("theme %s: t cycle", m.activeTheme().name)
+	hints := themeHint + "  |  j/k move  enter read  r reply  c compose  a archive  / search  ? help  q quit"
 	if m.mode == readerView {
-		hints = "b back  r reply  a archive  d delete  t theme  ? help  q back"
+		hints = themeHint + "  |  b back  r reply  a archive  d delete  ? help  q back"
 	}
 	if m.status != "" {
 		hints = m.status + "  |  " + hints
@@ -477,6 +516,8 @@ func (m model) overlayHelp(content string) string {
 	help := strings.Join([]string{
 		styles.panelTitle.Render("Help"),
 		"",
+		"Theme      " + m.activeTheme().name,
+		"",
 		"j / k      move down / up",
 		"Enter      open selected email",
 		"b / Esc    back to inbox",
@@ -486,7 +527,7 @@ func (m model) overlayHelp(content string) string {
 		"d          delete selected email (planned)",
 		"/          search current mailbox (planned)",
 		"R          refresh inbox (planned)",
-		"t          cycle color theme",
+		"t          cycle theme: Nocturne, Ember, Lagoon",
 		"?          close this help",
 		"q          quit or close current view",
 	}, "\n")
@@ -535,19 +576,24 @@ func (m model) activeTheme() appTheme {
 }
 
 func themeIndexFromEnv(value string) int {
+	index, _ := themeIndex(value)
+	return index
+}
+
+func themeIndex(value string) (int, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return 0
+		return 0, true
 	}
 	if strings.EqualFold(value, "copper") {
 		value = "Ember"
 	}
 	for i, theme := range appThemes {
 		if strings.EqualFold(theme.name, value) {
-			return i
+			return i, true
 		}
 	}
-	return 0
+	return 0, false
 }
 
 func scrollStart(cursor, visible, total int) int {

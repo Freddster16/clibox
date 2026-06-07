@@ -32,6 +32,12 @@ go run .
 Phase 1 does not require an email account. It uses fake messages so the TUI can
 be tested immediately.
 
+If you already installed `clibox` and want the latest UI changes:
+
+```sh
+go install github.com/Freddster16/clibox@latest
+```
+
 ## Target experience
 
 ```text
@@ -73,7 +79,19 @@ The first run should be boring in the best way:
 They color the header, rows, reader, help panel, and footer so each theme feels
 distinct. Press `t` inside the TUI to cycle between them.
 
+List available themes:
+
+```sh
+clibox --themes
+```
+
 To start with a specific theme:
+
+```sh
+clibox --theme lagoon
+```
+
+You can also use an environment variable:
 
 ```sh
 CLIBOX_THEME=lagoon clibox

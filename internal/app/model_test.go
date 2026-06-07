@@ -98,7 +98,7 @@ func TestThemeCycleShowsStatus(t *testing.T) {
 	if got := m.activeTheme().name; got != nextTheme {
 		t.Fatalf("expected active theme %q, got %q", nextTheme, got)
 	}
-	if want := "theme switched to " + nextTheme; m.status != want {
+	if want := "theme " + nextTheme + " active; press t for next"; m.status != want {
 		t.Fatalf("expected theme status %q, got %q", want, m.status)
 	}
 }
@@ -118,6 +118,52 @@ func TestCopperThemeAliasSelectsEmber(t *testing.T) {
 	m := New()
 	if got := m.activeTheme().name; got != "Ember" {
 		t.Fatalf("expected copper alias to select Ember, got %q", got)
+	}
+}
+
+func TestThemeCanBeSelectedFromConstructor(t *testing.T) {
+	m := NewWithTheme("ember")
+	if got := m.activeTheme().name; got != "Ember" {
+		t.Fatalf("expected constructor theme Ember, got %q", got)
+	}
+}
+
+func TestBlankConstructorThemeFallsBackToEnvironment(t *testing.T) {
+	t.Setenv("CLIBOX_THEME", "lagoon")
+
+	m := NewWithTheme("")
+	if got := m.activeTheme().name; got != "Lagoon" {
+		t.Fatalf("expected blank constructor theme to use environment, got %q", got)
+	}
+}
+
+func TestUnknownThemeShowsFallbackStatus(t *testing.T) {
+	m := NewWithTheme("banana")
+	if got := m.activeTheme().name; got != "Nocturne" {
+		t.Fatalf("expected unknown theme to fall back to Nocturne, got %q", got)
+	}
+	if !strings.Contains(m.status, `unknown theme "banana"`) {
+		t.Fatalf("expected unknown theme status, got %q", m.status)
+	}
+}
+
+func TestViewShowsThemeOnNarrowTerminal(t *testing.T) {
+	m := NewWithTheme("lagoon")
+	m.width = 34
+	m.height = 10
+
+	view := m.View()
+	if !strings.Contains(view, "Lagoon") {
+		t.Fatalf("expected narrow view to show active theme, got %q", view)
+	}
+}
+
+func TestThemeHelpListsCommands(t *testing.T) {
+	help := ThemeHelp()
+	for _, want := range []string{"nocturne", "ember", "lagoon", "clibox --theme lagoon", "press t"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("expected theme help to contain %q, got %q", want, help)
+		}
 	}
 }
 
