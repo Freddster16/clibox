@@ -58,7 +58,7 @@ Mailboxes          Inbox                         Reader
 
                                                   I looked at the prototype...
 
-j/k move  enter read  r reply  c compose  a archive  / search  t theme  ? help  q quit
+j/k move  enter read  r reply  c compose  a archive  / search  t themes  ? help  q quit
 ```
 
 On wide terminals, `clibox` should show a mailbox rail, inbox list, and reader
@@ -71,31 +71,20 @@ The first run should be boring in the best way:
 2. Pick an account if more than one account exists.
 3. Land in the inbox.
 4. Press `Enter` to read, `b` to go back, `r` to reply, `a` to archive, `/` to
-   search, `t` to cycle themes, and `q` to leave.
+   search, `t` to open the theme picker, and `q` to leave.
 
 ## Themes
 
 `clibox` ships with three vivid terminal themes: Nocturne, Ember, and Lagoon.
 They color the header, rows, reader, help panel, and footer so each theme feels
-distinct. Press `t` inside the TUI to cycle between them.
+distinct.
 
-List available themes:
+Theme selection lives inside the TUI:
 
-```sh
-clibox --themes
-```
-
-To start with a specific theme:
-
-```sh
-clibox --theme lagoon
-```
-
-You can also use an environment variable:
-
-```sh
-CLIBOX_THEME=lagoon clibox
-```
+- Press `t` to open the theme picker.
+- Press `j/k` to preview themes live.
+- Press `Enter` to apply the selected theme.
+- Press `Esc` to cancel and return to the previous theme.
 
 ## Planned real-email quick start
 

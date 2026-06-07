@@ -89,17 +89,16 @@ func TestPlannedActionsShowStatus(t *testing.T) {
 	}
 }
 
-func TestThemeCycleShowsStatus(t *testing.T) {
+func TestThemeKeyOpensThemePicker(t *testing.T) {
 	t.Setenv("CLIBOX_THEME", "")
 	m := New()
-	nextTheme := appThemes[(m.theme+1)%len(appThemes)].name
 
 	m = pressKey(t, m, "t")
-	if got := m.activeTheme().name; got != nextTheme {
-		t.Fatalf("expected active theme %q, got %q", nextTheme, got)
+	if !m.showThemes {
+		t.Fatal("expected t to open the theme picker")
 	}
-	if want := "theme " + nextTheme + " active; press t for next"; m.status != want {
-		t.Fatalf("expected theme status %q, got %q", want, m.status)
+	if m.themeCursor != m.theme {
+		t.Fatalf("expected theme cursor to start on active theme, got cursor %d and theme %d", m.themeCursor, m.theme)
 	}
 }
 
@@ -147,6 +146,57 @@ func TestUnknownThemeShowsFallbackStatus(t *testing.T) {
 	}
 }
 
+func TestThemePickerPreviewsAndAppliesTheme(t *testing.T) {
+	m := NewWithTheme("nocturne")
+
+	m = pressKey(t, m, "t")
+	m = pressKey(t, m, "j")
+	if got := m.activeTheme().name; got != "Ember" {
+		t.Fatalf("expected j in theme picker to preview Ember, got %q", got)
+	}
+	if !m.showThemes {
+		t.Fatal("expected theme picker to stay open while previewing")
+	}
+
+	m = pressKey(t, m, "enter")
+	if m.showThemes {
+		t.Fatal("expected enter to close theme picker")
+	}
+	if got := m.activeTheme().name; got != "Ember" {
+		t.Fatalf("expected enter to apply Ember, got %q", got)
+	}
+	if want := "theme Ember applied"; m.status != want {
+		t.Fatalf("expected applied status %q, got %q", want, m.status)
+	}
+}
+
+func TestThemePickerCanCancelPreview(t *testing.T) {
+	m := NewWithTheme("nocturne")
+
+	m = pressKey(t, m, "t")
+	m = pressKey(t, m, "j")
+	m = pressKey(t, m, "esc")
+	if m.showThemes {
+		t.Fatal("expected esc to close theme picker")
+	}
+	if got := m.activeTheme().name; got != "Nocturne" {
+		t.Fatalf("expected esc to restore Nocturne, got %q", got)
+	}
+}
+
+func TestThemePickerNumberAppliesTheme(t *testing.T) {
+	m := NewWithTheme("nocturne")
+
+	m = pressKey(t, m, "t")
+	m = pressKey(t, m, "3")
+	if got := m.activeTheme().name; got != "Lagoon" {
+		t.Fatalf("expected number shortcut to apply Lagoon, got %q", got)
+	}
+	if m.showThemes {
+		t.Fatal("expected number shortcut to close theme picker")
+	}
+}
+
 func TestViewShowsThemeOnNarrowTerminal(t *testing.T) {
 	m := NewWithTheme("lagoon")
 	m.width = 34
@@ -158,9 +208,23 @@ func TestViewShowsThemeOnNarrowTerminal(t *testing.T) {
 	}
 }
 
+func TestViewShowsThemePickerInsideTUI(t *testing.T) {
+	m := NewWithTheme("lagoon")
+	m.width = 72
+	m.height = 22
+	m = pressKey(t, m, "t")
+
+	view := m.View()
+	for _, want := range []string{"Themes", "Nocturne", "Ember", "Lagoon", "Enter applies"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected theme picker view to contain %q, got %q", want, view)
+		}
+	}
+}
+
 func TestThemeHelpListsCommands(t *testing.T) {
 	help := ThemeHelp()
-	for _, want := range []string{"nocturne", "ember", "lagoon", "clibox --theme lagoon", "press t"} {
+	for _, want := range []string{"nocturne", "ember", "lagoon", "clibox --theme lagoon", "theme picker"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("expected theme help to contain %q, got %q", want, help)
 		}

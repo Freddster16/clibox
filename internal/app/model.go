@@ -17,14 +17,17 @@ const (
 )
 
 type model struct {
-	messages []message
-	cursor   int
-	mode     viewMode
-	showHelp bool
-	status   string
-	theme    int
-	width    int
-	height   int
+	messages          []message
+	cursor            int
+	mode              viewMode
+	showHelp          bool
+	showThemes        bool
+	status            string
+	theme             int
+	themeCursor       int
+	themeBeforePicker int
+	width             int
+	height            int
 }
 
 type styles struct {
@@ -46,9 +49,10 @@ type styles struct {
 }
 
 type appTheme struct {
-	name    string
-	palette palette
-	styles  styles
+	name        string
+	description string
+	palette     palette
+	styles      styles
 }
 
 type palette struct {
@@ -72,7 +76,7 @@ type palette struct {
 }
 
 var appThemes = []appTheme{
-	newTheme("Nocturne", palette{
+	newTheme("Nocturne", "violet header, cyan accents, dark blue surfaces", palette{
 		background:     "#09090f",
 		header:         "#312e81",
 		surface:        "#111827",
@@ -91,7 +95,7 @@ var appThemes = []appTheme{
 		readerHeader:   "#3730a3",
 		readerHeaderFg: "#eef2ff",
 	}),
-	newTheme("Ember", palette{
+	newTheme("Ember", "orange header, gold accents, warm dark surfaces", palette{
 		background:     "#120b07",
 		header:         "#7c2d12",
 		surface:        "#26150d",
@@ -110,7 +114,7 @@ var appThemes = []appTheme{
 		readerHeader:   "#9a3412",
 		readerHeaderFg: "#fff7ed",
 	}),
-	newTheme("Lagoon", palette{
+	newTheme("Lagoon", "teal header, seafoam accents, deep green surfaces", palette{
 		background:     "#031b1f",
 		header:         "#155e75",
 		surface:        "#07343a",
@@ -131,10 +135,11 @@ var appThemes = []appTheme{
 	}),
 }
 
-func newTheme(name string, p palette) appTheme {
+func newTheme(name, description string, p palette) appTheme {
 	return appTheme{
-		name:    name,
-		palette: p,
+		name:        name,
+		description: description,
+		palette:     p,
 		styles: styles{
 			screen: lipgloss.NewStyle().
 				Foreground(lipgloss.Color(p.text)).
@@ -207,30 +212,35 @@ func NewWithTheme(name string) model {
 	}
 
 	index, ok := themeIndex(selected)
-	status := fmt.Sprintf("theme %s active; press t to change", appThemes[index].name)
+	status := fmt.Sprintf("theme %s active; press t to choose", appThemes[index].name)
 	if strings.TrimSpace(selected) != "" && !ok {
 		status = fmt.Sprintf("unknown theme %q; using %s", selected, appThemes[index].name)
 	}
 
 	return model{
-		messages: fakeMessages(),
-		status:   status,
-		theme:    index,
+		messages:          fakeMessages(),
+		status:            status,
+		theme:             index,
+		themeCursor:       index,
+		themeBeforePicker: index,
 	}
 }
 
 func ThemeHelp() string {
+	var lines []string
+	for _, theme := range appThemes {
+		lines = append(lines, fmt.Sprintf("  %-9s %s", strings.ToLower(theme.name), theme.description))
+	}
+
 	return fmt.Sprintf(`Available clibox themes:
-  nocturne  violet header, cyan accents, dark blue surfaces
-  ember     orange header, gold accents, warm dark surfaces
-  lagoon    teal header, seafoam accents, deep green surfaces
+%s
 
 Start with a theme:
   clibox --theme lagoon
 
 Inside clibox:
-  press t to cycle themes
-`)
+  press t to open the theme picker
+`, strings.Join(lines, "\n"))
 }
 
 func (m model) Init() tea.Cmd {
@@ -245,6 +255,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		key := msg.String()
+
+		if m.showThemes {
+			switch key {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "up", "k":
+				return m.previewTheme(m.themeCursor - 1), nil
+			case "down", "j":
+				return m.previewTheme(m.themeCursor + 1), nil
+			case "enter", "t":
+				m.theme = m.themeCursor
+				m.themeBeforePicker = m.theme
+				m.showThemes = false
+				return m.withStatus("theme " + m.activeTheme().name + " applied"), nil
+			case "esc", "q":
+				m.theme = m.themeBeforePicker
+				m.themeCursor = m.theme
+				m.showThemes = false
+				return m.withStatus("theme " + m.activeTheme().name + " kept"), nil
+			case "1", "2", "3":
+				index := int([]rune(key)[0] - '1')
+				if index >= 0 && index < len(appThemes) {
+					m.themeCursor = index
+					m.theme = index
+					m.themeBeforePicker = index
+					m.showThemes = false
+					return m.withStatus("theme " + m.activeTheme().name + " applied"), nil
+				}
+			}
+			return m, nil
+		}
 
 		if m.showHelp {
 			switch key {
@@ -301,8 +342,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "R":
 			return m.withStatus("refresh arrives when the backend adapter exists"), nil
 		case "t":
-			m.theme = (m.theme + 1) % len(appThemes)
-			return m.withStatus("theme " + m.activeTheme().name + " active; press t for next"), nil
+			m.showThemes = true
+			m.themeCursor = m.theme
+			m.themeBeforePicker = m.theme
+			m.status = ""
 		}
 	}
 
@@ -317,6 +360,9 @@ func (m model) View() string {
 	content := m.renderCurrentView()
 	if m.showHelp {
 		content = m.overlayHelp(content)
+	}
+	if m.showThemes {
+		content = m.overlayThemes(content)
 	}
 
 	return content
@@ -367,7 +413,7 @@ func (m model) renderInbox(height int) string {
 	lines := []string{styles.panelTitle.Render("Inbox")}
 	lines = append(lines, m.renderRows(m.width, height-3)...)
 	lines = append(lines, "")
-	lines = append(lines, styles.muted.Render(fmt.Sprintf("Theme %s. Press t to change, ? for help.", m.activeTheme().name)))
+	lines = append(lines, styles.muted.Render(fmt.Sprintf("Theme %s. Press t to choose, ? for help.", m.activeTheme().name)))
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
 
@@ -500,7 +546,7 @@ func (m model) renderReader(height int) string {
 
 func (m model) renderFooter() string {
 	styles := m.activeTheme().styles
-	themeHint := fmt.Sprintf("theme %s: t cycle", m.activeTheme().name)
+	themeHint := fmt.Sprintf("theme %s: t themes", m.activeTheme().name)
 	hints := themeHint + "  |  j/k move  enter read  r reply  c compose  a archive  / search  ? help  q quit"
 	if m.mode == readerView {
 		hints = themeHint + "  |  b back  r reply  a archive  d delete  ? help  q back"
@@ -527,14 +573,58 @@ func (m model) overlayHelp(content string) string {
 		"d          delete selected email (planned)",
 		"/          search current mailbox (planned)",
 		"R          refresh inbox (planned)",
-		"t          cycle theme: Nocturne, Ember, Lagoon",
+		"t          open theme picker",
 		"?          close this help",
 		"q          quit or close current view",
 	}, "\n")
 
 	panel := styles.helpPanel.Width(min(58, max(30, m.width-8))).Render(help)
-	topPad := max(0, (m.height-lipgloss.Height(panel))/3)
-	leftPad := max(0, (m.width-lipgloss.Width(panel))/2)
+	return placeOverlay(content, panel, m.width, m.height)
+}
+
+func (m model) overlayThemes(content string) string {
+	styles := m.activeTheme().styles
+	panelWidth := min(72, max(38, m.width-8))
+	lines := []string{
+		styles.panelTitle.Render("Themes"),
+		"",
+		styles.muted.Render("j/k previews colors. Enter applies. Esc cancels."),
+		"",
+	}
+
+	for i, theme := range appThemes {
+		prefix := " "
+		if i == m.themeCursor {
+			prefix = ">"
+		}
+		active := " "
+		if i == m.themeBeforePicker {
+			active = "*"
+		}
+		label := fmt.Sprintf("%s %s %d. %-9s %s", prefix, active, i+1, theme.name, theme.description)
+		style := styles.row
+		if i%2 == 1 {
+			style = styles.rowAlt
+		}
+		if i == m.themeCursor {
+			style = theme.styles.selected
+		}
+		lines = append(lines, style.Width(panelWidth).Render(truncate(label, panelWidth)))
+		lines = append(lines, "  "+renderThemeSwatches(theme, max(10, panelWidth-2)))
+	}
+
+	lines = append(lines,
+		"",
+		styles.muted.Render("* original theme.  1-3 jumps directly."),
+	)
+
+	panel := styles.helpPanel.Width(panelWidth).Render(strings.Join(lines, "\n"))
+	return placeOverlay(content, panel, m.width, m.height)
+}
+
+func placeOverlay(content, panel string, width, height int) string {
+	topPad := max(0, (height-lipgloss.Height(panel))/3)
+	leftPad := max(0, (width-lipgloss.Width(panel))/2)
 	overlay := strings.Repeat("\n", topPad) + lipgloss.NewStyle().MarginLeft(leftPad).Render(panel)
 
 	contentLines := strings.Split(content, "\n")
@@ -552,6 +642,25 @@ func (m model) overlayHelp(content string) string {
 	return strings.Join(contentLines, "\n")
 }
 
+func renderThemeSwatches(theme appTheme, width int) string {
+	swatches := []string{
+		theme.styles.header.Render(" header "),
+		theme.styles.themeBadge.Render(" accent "),
+		theme.styles.selected.Render(" selected "),
+		theme.styles.unread.Render(" unread "),
+	}
+
+	out := swatches[0]
+	for _, swatch := range swatches[1:] {
+		next := out + " " + swatch
+		if lipgloss.Width(next) > width {
+			break
+		}
+		out = next
+	}
+	return out
+}
+
 func (m model) selectedMessage() message {
 	if len(m.messages) == 0 {
 		return message{}
@@ -561,6 +670,19 @@ func (m model) selectedMessage() message {
 
 func (m model) withStatus(text string) model {
 	m.status = text
+	return m
+}
+
+func (m model) previewTheme(index int) model {
+	if len(appThemes) == 0 {
+		return m
+	}
+	index %= len(appThemes)
+	if index < 0 {
+		index += len(appThemes)
+	}
+	m.themeCursor = index
+	m.theme = index
 	return m
 }
 
