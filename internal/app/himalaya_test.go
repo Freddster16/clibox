@@ -160,6 +160,36 @@ func TestHimalayaBackendLoadsAllPages(t *testing.T) {
 	}
 }
 
+func TestHimalayaBackendOmitsPageSizeWhenUnset(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stdout: []byte(`[]`),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:  "himalaya",
+		mailbox: "INBOX",
+		runner:  runner,
+	}
+
+	messages, err := backend.ListEnvelopes(context.Background())
+	if err != nil {
+		t.Fatalf("expected empty mailbox to load: %v", err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("expected empty mailbox, got %+v", messages)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected one page call, got %v", runner.calls)
+	}
+	if strings.Contains(runner.calls[0], "--page-size") {
+		t.Fatalf("expected no page-size flag when unset, got %q", runner.calls[0])
+	}
+	if runner.calls[0] != "himalaya envelope list --output json --page 1 --folder INBOX" {
+		t.Fatalf("unexpected command: %q", runner.calls[0])
+	}
+}
+
 func TestHimalayaBackendTreatsOutOfBoundsPageAsEnd(t *testing.T) {
 	runner := &fakeCommandRunner{results: []fakeCommandResult{
 		{

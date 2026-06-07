@@ -14,8 +14,6 @@ import (
 	"time"
 )
 
-const defaultHimalayaPageSize = 100
-
 type inboxBackend interface {
 	ListEnvelopes(context.Context) ([]message, error)
 	Label() string
@@ -61,9 +59,6 @@ func newHimalayaBackend(options Options) himalayaBackend {
 	binary := firstNonEmpty(options.Himalaya, os.Getenv("CLIBOX_HIMALAYA"), "himalaya")
 	mailbox := firstNonEmpty(options.Mailbox, "INBOX")
 	pageSize := options.PageSize
-	if pageSize <= 0 {
-		pageSize = defaultHimalayaPageSize
-	}
 
 	return himalayaBackend{
 		binary:   binary,
@@ -110,7 +105,7 @@ func (h himalayaBackend) ListEnvelopes(ctx context.Context) ([]message, error) {
 				}
 				messages = append(messages, pageMessages...)
 				pageLoaded = true
-				if len(pageMessages) < h.pageSize {
+				if len(pageMessages) == 0 || (h.pageSize > 0 && len(pageMessages) < h.pageSize) {
 					return messages, nil
 				}
 				break
@@ -135,10 +130,16 @@ func (h himalayaBackend) ListEnvelopes(ctx context.Context) ([]message, error) {
 }
 
 func (h himalayaBackend) listCandidates(page int) [][]string {
-	size := strconv.Itoa(h.pageSize)
 	pageNumber := strconv.Itoa(page)
-	v1 := appendFlags([]string{"envelope", "list", "--output", "json", "--page", pageNumber, "--page-size", size}, "--account", h.account, "--folder", h.mailbox)
-	v2 := appendFlags([]string{"envelopes", "list", "--json", "--page", pageNumber, "--page-size", size}, "--account", h.account, "--mailbox", h.mailbox)
+	v1 := []string{"envelope", "list", "--output", "json", "--page", pageNumber}
+	v2 := []string{"envelopes", "list", "--json", "--page", pageNumber}
+	if h.pageSize > 0 {
+		size := strconv.Itoa(h.pageSize)
+		v1 = append(v1, "--page-size", size)
+		v2 = append(v2, "--page-size", size)
+	}
+	v1 = appendFlags(v1, "--account", h.account, "--folder", h.mailbox)
+	v2 = appendFlags(v2, "--account", h.account, "--mailbox", h.mailbox)
 	return [][]string{v1, v2}
 }
 

@@ -48,9 +48,6 @@ func (h himalayaBackend) SaveAccountSetup(setup accountSetup) error {
 	if setup.PageSize <= 0 {
 		setup.PageSize = h.pageSize
 	}
-	if setup.PageSize <= 0 {
-		setup.PageSize = defaultHimalayaPageSize
-	}
 
 	credential, err := saveCredential(setup)
 	if err != nil {
@@ -157,7 +154,6 @@ func buildHimalayaAccountBlock(setup accountSetup, credential credentialRef, def
 		"folder.aliases.sent = "+tomlString(folders["sent"]),
 		"folder.aliases.drafts = "+tomlString(folders["drafts"]),
 		"folder.aliases.trash = "+tomlString(folders["trash"]),
-		"envelope.list.page-size = "+strconv.Itoa(setup.PageSize),
 		"backend.type = \"imap\"",
 		"backend.host = "+tomlString(provider.IMAPHost),
 		"backend.port = "+strconv.Itoa(provider.IMAPPort),
@@ -165,6 +161,9 @@ func buildHimalayaAccountBlock(setup accountSetup, credential credentialRef, def
 		"backend.login = "+tomlString(setup.Email),
 		"backend.auth.type = \"password\"",
 	)
+	if setup.PageSize > 0 {
+		lines = append(lines, "envelope.list.page-size = "+strconv.Itoa(setup.PageSize))
+	}
 	lines = appendCredential(lines, "backend.auth", credential)
 	lines = append(lines,
 		"message.send.backend.type = \"smtp\"",

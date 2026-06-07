@@ -185,9 +185,9 @@ clibox --page-size 50
 clibox doctor --account personal --mailbox INBOX
 ```
 
-`--page-size` controls the number of envelopes requested from Himalaya per
-network call. It is not the mailbox limit; `clibox` keeps loading pages until
-there are no more messages.
+By default, `clibox` loads all available pages in the mailbox. `--page-size` is
+only an advanced tuning knob for how many envelopes Himalaya should return per
+request; it is not an inbox limit.
 
 `clibox` does not write email credentials into its own config. On macOS it saves
 the password/app password to Keychain and writes a Himalaya `auth.cmd` entry that

@@ -37,6 +37,19 @@ func TestBuildHimalayaAccountBlockUsesBackendConfig(t *testing.T) {
 	}
 }
 
+func TestBuildHimalayaAccountBlockOmitsPageSizeWhenUnset(t *testing.T) {
+	setup := accountSetup{
+		Account:     "gmail",
+		Email:       "freddy@gmail.com",
+		DisplayName: "Freddy",
+		Provider:    detectProvider("freddy@gmail.com"),
+	}
+	block := buildHimalayaAccountBlock(setup, credentialRef{Raw: "secret"}, true)
+	if strings.Contains(block, "envelope.list.page-size") {
+		t.Fatalf("expected generated config not to set a page size by default:\n%s", block)
+	}
+}
+
 func TestWriteHimalayaAccountConfigCreatesAndReplacesAccount(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "himalaya", "config.toml")
 	setup := accountSetup{
