@@ -262,10 +262,35 @@ func pressKey(t *testing.T, m model, key string) model {
 
 func newTestModel() model {
 	m := New()
-	m.messages = fakeMessages()
+	m.messages = testMessages()
 	m.loading = false
 	m.status = ""
 	return m
+}
+
+func testMessages() []message {
+	return []message{
+		{
+			ID:      "1",
+			From:    "Alice",
+			Email:   "alice@example.com",
+			Subject: "Re: Design notes",
+			Date:    "10:34 AM",
+			Preview: "I looked at the prototype.",
+			Body:    "Hey Freddy,\n\nI looked at the prototype and left notes.",
+			Unread:  true,
+		},
+		{
+			ID:      "2",
+			From:    "GitHub",
+			Email:   "notifications@github.com",
+			Subject: "New issue assigned",
+			Date:    "Yesterday",
+			Preview: "You were assigned issue #42.",
+			Body:    "You were assigned issue #42 in Freddster16/clibox.",
+			Unread:  true,
+		},
+	}
 }
 
 func keyMsg(key string) tea.KeyMsg {

@@ -592,41 +592,28 @@ func (m model) renderRows(width, height int) []string {
 }
 
 func (m model) renderPreview(width, height int) string {
-	styles := m.activeTheme().styles
-	if len(m.messages) == 0 {
-		lines := []string{
-			styles.panelTitle.Render("Reader"),
-			styles.readerBody.Width(width).Render(""),
-			styles.readerBody.Width(width).Render("Configure Himalaya, then press R to load your inbox."),
-		}
-		return fitHeight(strings.Join(lines, "\n"), height)
-	}
-
-	msg := m.selectedMessage()
-	lines := []string{
-		styles.panelTitle.Render("Reader"),
-		styles.readerHeader.Width(width).Render("From: " + msg.From + " <" + msg.Email + ">"),
-		styles.readerHeader.Width(width).Render("Subject: " + msg.Subject),
-		styles.readerHeader.Width(width).Render("Date: " + msg.Date),
-		styles.readerBody.Width(width).Render(""),
-	}
-	lines = append(lines, styledLines(wrapText(msg.Preview+"\n\n"+msg.Body, width), styles.readerBody, width)...)
-	return fitHeight(strings.Join(lines, "\n"), height)
+	return m.renderMessage(width, height, true)
 }
 
 func (m model) renderReader(height int) string {
+	return m.renderMessage(max(32, m.width), height, false)
+}
+
+func (m model) renderMessage(width, height int, includePreview bool) string {
 	styles := m.activeTheme().styles
-	width := max(32, m.width)
 	if len(m.messages) == 0 {
-		lines := []string{
+		return fitHeight(strings.Join([]string{
 			styles.panelTitle.Render("Reader"),
 			styles.readerBody.Width(width).Render("No message selected."),
 			styles.readerBody.Width(width).Render("Configure Himalaya, then press R to load your inbox."),
-		}
-		return fitHeight(strings.Join(lines, "\n"), height)
+		}, "\n"), height)
 	}
 
 	msg := m.selectedMessage()
+	body := msg.Body
+	if includePreview && strings.TrimSpace(msg.Preview) != "" {
+		body = msg.Preview + "\n\n" + body
+	}
 	lines := []string{
 		styles.panelTitle.Render("Reader"),
 		styles.readerHeader.Width(width).Render("From: " + msg.From + " <" + msg.Email + ">"),
@@ -634,7 +621,7 @@ func (m model) renderReader(height int) string {
 		styles.readerHeader.Width(width).Render("Date: " + msg.Date),
 		styles.readerBody.Width(width).Render(""),
 	}
-	lines = append(lines, styledLines(wrapText(msg.Body, width-2), styles.readerBody, width)...)
+	lines = append(lines, styledLines(wrapText(body, width-2), styles.readerBody, width)...)
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
 
@@ -803,11 +790,6 @@ func (m model) mailboxLabel() string {
 		return m.mailbox
 	}
 	return "INBOX"
-}
-
-func themeIndexFromEnv(value string) int {
-	index, _ := themeIndex(value)
-	return index
 }
 
 func themeIndex(value string) (int, bool) {

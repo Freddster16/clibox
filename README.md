@@ -124,7 +124,33 @@ existing Himalaya setup and keeps command details inside the backend adapter.
 The adapter currently tries the stable Himalaya v1 command first
 (`himalaya envelope list --output json`) and falls back to the in-development
 v2 shape (`himalaya envelopes list --json`) only when the command shape is
-incompatible.
+incompatible. Runtime/setup errors, such as authentication or unknown-account
+failures, are shown directly instead of being hidden behind another fallback.
+
+## Development
+
+Run the project locally with:
+
+```sh
+go run .
+```
+
+Check the Himalaya setup without opening the full-screen TUI:
+
+```sh
+go run . doctor
+```
+
+Run the verification suite:
+
+```sh
+go test ./...
+go build ./...
+```
+
+Production code no longer carries a fake inbox. Test fixtures live in the test
+suite, while the app itself starts by loading envelopes from the configured
+Himalaya backend.
 
 ## Planned interface
 

@@ -127,6 +127,35 @@ func TestHimalayaBackendFallsBackToV2Shape(t *testing.T) {
 	}
 }
 
+func TestHimalayaBackendDoesNotFallbackOnRuntimeFailure(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stderr: []byte("unrecognized account personal"),
+			err:    errors.New("exit status 1"),
+		},
+		{
+			stdout: []byte(`[{"id":"should-not-run"}]`),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:   "himalaya",
+		mailbox:  "INBOX",
+		pageSize: 10,
+		runner:   runner,
+	}
+
+	_, err := backend.ListEnvelopes(context.Background())
+	if err == nil {
+		t.Fatal("expected runtime failure to return an error")
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected runtime failure not to fallback, got calls: %v", runner.calls)
+	}
+	if !strings.Contains(err.Error(), "unrecognized account personal") {
+		t.Fatalf("expected error to explain runtime failure, got %q", err)
+	}
+}
+
 type fakeCommandRunner struct {
 	results []fakeCommandResult
 	calls   []string

@@ -53,19 +53,8 @@ func Doctor(ctx context.Context, options Options) (string, error) {
 }
 
 func newHimalayaBackend(options Options) himalayaBackend {
-	binary := strings.TrimSpace(options.Himalaya)
-	if binary == "" {
-		binary = strings.TrimSpace(os.Getenv("CLIBOX_HIMALAYA"))
-	}
-	if binary == "" {
-		binary = "himalaya"
-	}
-
-	mailbox := strings.TrimSpace(options.Mailbox)
-	if mailbox == "" {
-		mailbox = "INBOX"
-	}
-
+	binary := firstNonEmpty(options.Himalaya, os.Getenv("CLIBOX_HIMALAYA"), "himalaya")
+	mailbox := firstNonEmpty(options.Mailbox, "INBOX")
 	pageSize := options.PageSize
 	if pageSize <= 0 {
 		pageSize = defaultHimalayaPageSize
@@ -81,14 +70,7 @@ func newHimalayaBackend(options Options) himalayaBackend {
 }
 
 func (h himalayaBackend) Label() string {
-	parts := []string{"Himalaya"}
-	if h.account != "" {
-		parts = append(parts, h.account)
-	}
-	if h.mailbox != "" {
-		parts = append(parts, h.mailbox)
-	}
-	return strings.Join(parts, " ")
+	return strings.Join(nonEmpty("Himalaya", h.account, h.mailbox), " ")
 }
 
 func (h himalayaBackend) ListEnvelopes(ctx context.Context) ([]message, error) {
@@ -96,58 +78,29 @@ func (h himalayaBackend) ListEnvelopes(ctx context.Context) ([]message, error) {
 		h.runner = osCommandRunner{}
 	}
 
-	var failures []commandFailure
+	var last commandFailure
 	for _, args := range h.listCandidates() {
 		stdout, stderr, err := h.runner.Run(ctx, h.binary, args)
-		if err != nil {
-			failure := commandFailure{
-				program: h.binary,
-				args:    args,
-				stdout:  stdout,
-				stderr:  stderr,
-				err:     err,
+		if err == nil {
+			messages, parseErr := parseHimalayaMessages(stdout)
+			if parseErr != nil {
+				return nil, fmt.Errorf("Himalaya returned unreadable JSON for %s: %w", shellCommand(h.binary, args), parseErr)
 			}
-			failures = append(failures, failure)
-			if isMissingExecutable(err) || !looksLikeCommandShapeError(failure.output()) {
-				return nil, describeHimalayaFailure(failure)
-			}
-			continue
+			return messages, nil
 		}
 
-		messages, parseErr := parseHimalayaMessages(stdout)
-		if parseErr != nil {
-			return nil, fmt.Errorf("Himalaya returned unreadable JSON for %s: %w", shellCommand(h.binary, args), parseErr)
+		last = commandFailure{program: h.binary, args: args, stdout: stdout, stderr: stderr, err: err}
+		if isMissingExecutable(err) || !looksLikeCommandShapeError(last.output()) {
+			return nil, describeHimalayaFailure(last)
 		}
-		return messages, nil
 	}
-
-	if len(failures) == 0 {
-		return nil, errors.New("no Himalaya envelope command candidates were configured")
-	}
-	return nil, describeHimalayaFailure(failures[len(failures)-1])
+	return nil, describeHimalayaFailure(last)
 }
 
 func (h himalayaBackend) listCandidates() [][]string {
-	account := h.account
-	mailbox := h.mailbox
-	pageSize := strconv.Itoa(h.pageSize)
-
-	v1 := []string{"envelope", "list", "--output", "json", "--page-size", pageSize}
-	if account != "" {
-		v1 = append(v1, "--account", account)
-	}
-	if mailbox != "" {
-		v1 = append(v1, "--folder", mailbox)
-	}
-
-	v2 := []string{"envelopes", "list", "--json", "--page-size", pageSize}
-	if account != "" {
-		v2 = append(v2, "--account", account)
-	}
-	if mailbox != "" {
-		v2 = append(v2, "--mailbox", mailbox)
-	}
-
+	size := strconv.Itoa(h.pageSize)
+	v1 := appendFlags([]string{"envelope", "list", "--output", "json", "--page-size", size}, "--account", h.account, "--folder", h.mailbox)
+	v2 := appendFlags([]string{"envelopes", "list", "--json", "--page-size", size}, "--account", h.account, "--mailbox", h.mailbox)
 	return [][]string{v1, v2}
 }
 
@@ -169,83 +122,69 @@ func (r osCommandRunner) Run(ctx context.Context, program string, args []string)
 }
 
 func parseHimalayaMessages(data []byte) ([]message, error) {
-	trimmed := bytes.TrimSpace(data)
-	if len(trimmed) == 0 {
+	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, errors.New("empty output")
 	}
 
-	var decoded any
-	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	var raw any
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
-	if err := decoder.Decode(&decoded); err != nil {
+	if err := decoder.Decode(&raw); err != nil {
 		return nil, err
 	}
 
-	items := extractEnvelopeItems(decoded)
-	messages := make([]message, 0, len(items))
-	for _, item := range items {
-		obj, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		flags := parseFlags(firstValue(obj, "flags"))
-		fromName, fromEmail := parseAddressValue(firstValue(obj, "from", "sender"))
-		if fromName == "" {
-			fromName = firstString(obj, "from_name", "fromName", "sender_name", "senderName")
-		}
-		if fromEmail == "" {
-			fromEmail = firstString(obj, "from_email", "fromEmail", "sender_email", "senderEmail")
-		}
-		if fromName == "" && fromEmail != "" {
-			fromName = fromEmail
-		}
-		if fromName == "" {
-			fromName = "Unknown"
-		}
-
-		id := firstString(obj, "id", "uid", "message_id", "messageId", "message-id")
-		if id == "" {
-			id = strconv.Itoa(len(messages) + 1)
-		}
-
-		subject := firstString(obj, "subject")
-		if subject == "" {
-			subject = "(no subject)"
-		}
-
-		preview := firstString(obj, "preview", "snippet", "body_preview", "bodyPreview")
-		if preview == "" && len(flags) > 0 {
-			preview = "Flags: " + strings.Join(flags, ", ")
-		}
-
-		messages = append(messages, message{
-			ID:      id,
-			From:    fromName,
-			Email:   fromEmail,
-			Subject: subject,
-			Date:    firstString(obj, "date", "sent_at", "sentAt", "received_at", "receivedAt"),
-			Preview: preview,
-			Body:    "Message body loading arrives in Phase 3.",
-			Unread:  flagsKnownAsUnread(flags),
-		})
+	envelopes := envelopeObjects(raw)
+	messages := make([]message, 0, len(envelopes))
+	for _, envelope := range envelopes {
+		messages = append(messages, messageFromEnvelope(envelope, len(messages)+1))
 	}
-
 	return messages, nil
 }
 
-func extractEnvelopeItems(value any) []any {
-	switch typed := value.(type) {
+func messageFromEnvelope(envelope map[string]any, fallbackID int) message {
+	flags := flagList(value(envelope, "flags"))
+	fromName, fromEmail := address(value(envelope, "from", "sender"))
+	fromName = firstNonEmpty(fromName, text(envelope, "from_name", "fromName", "sender_name", "senderName"), fromEmail, "Unknown")
+	fromEmail = firstNonEmpty(fromEmail, text(envelope, "from_email", "fromEmail", "sender_email", "senderEmail"))
+
+	preview := text(envelope, "preview", "snippet", "body_preview", "bodyPreview")
+	if preview == "" && len(flags) > 0 {
+		preview = "Flags: " + strings.Join(flags, ", ")
+	}
+
+	return message{
+		ID:      firstNonEmpty(text(envelope, "id", "uid", "message_id", "messageId", "message-id"), strconv.Itoa(fallbackID)),
+		From:    fromName,
+		Email:   fromEmail,
+		Subject: firstNonEmpty(text(envelope, "subject"), "(no subject)"),
+		Date:    text(envelope, "date", "sent_at", "sentAt", "received_at", "receivedAt"),
+		Preview: preview,
+		Body:    "Message body loading arrives in Phase 3.",
+		Unread:  isUnread(flags),
+	}
+}
+
+func envelopeObjects(raw any) []map[string]any {
+	switch value := raw.(type) {
 	case []any:
-		return typed
+		var out []map[string]any
+		for _, item := range value {
+			if obj, ok := item.(map[string]any); ok {
+				out = append(out, obj)
+			}
+		}
+		return out
 	case map[string]any:
-		if looksLikeEnvelope(typed) {
-			return []any{typed}
+		if _, hasID := lookup(value, "id"); hasID {
+			return []map[string]any{value}
+		}
+		if _, hasSubject := lookup(value, "subject"); hasSubject {
+			return []map[string]any{value}
 		}
 		for _, key := range []string{"envelopes", "messages", "items", "results", "data", "result", "response"} {
-			if nested, ok := getCaseInsensitive(typed, key); ok {
-				if items := extractEnvelopeItems(nested); len(items) > 0 {
-					return items
+			if nested, ok := lookup(value, key); ok {
+				if found := envelopeObjects(nested); len(found) > 0 {
+					return found
 				}
 			}
 		}
@@ -253,61 +192,19 @@ func extractEnvelopeItems(value any) []any {
 	return nil
 }
 
-func looksLikeEnvelope(obj map[string]any) bool {
-	_, hasID := getCaseInsensitive(obj, "id")
-	_, hasSubject := getCaseInsensitive(obj, "subject")
-	return hasID || hasSubject
-}
-
-func parseFlags(value any) []string {
-	switch typed := value.(type) {
+func address(raw any) (string, string) {
+	switch typed := raw.(type) {
 	case []any:
-		flags := make([]string, 0, len(typed))
 		for _, item := range typed {
-			if flag := strings.TrimSpace(valueToString(item)); flag != "" {
-				flags = append(flags, flag)
+			if name, email := address(item); name != "" || email != "" {
+				return name, email
 			}
 		}
-		return flags
-	case string:
-		parts := strings.FieldsFunc(typed, func(r rune) bool {
-			return r == ',' || r == ' ' || r == '|'
-		})
-		flags := make([]string, 0, len(parts))
-		for _, part := range parts {
-			if flag := strings.TrimSpace(part); flag != "" {
-				flags = append(flags, flag)
-			}
-		}
-		return flags
-	default:
-		return nil
-	}
-}
-
-func flagsKnownAsUnread(flags []string) bool {
-	for _, flag := range flags {
-		normalized := strings.TrimLeft(strings.ToLower(flag), "\\")
-		switch normalized {
-		case "seen", "read":
-			return false
-		}
-	}
-	return len(flags) > 0
-}
-
-func parseAddressValue(value any) (string, string) {
-	switch typed := value.(type) {
-	case []any:
-		if len(typed) == 0 {
-			return "", ""
-		}
-		return parseAddressValue(typed[0])
 	case map[string]any:
-		name := firstString(typed, "name", "display_name", "displayName")
-		email := firstString(typed, "address", "addr", "email", "mail")
+		name := text(typed, "name", "display_name", "displayName")
+		email := text(typed, "address", "addr", "email", "mail")
 		if email == "" {
-			_, email = parseAddressValue(firstValue(typed, "mailbox", "raw"))
+			_, email = address(value(typed, "mailbox", "raw"))
 		}
 		return name, email
 	case string:
@@ -316,26 +213,59 @@ func parseAddressValue(value any) (string, string) {
 			return parsed.Name, parsed.Address
 		}
 		return strings.TrimSpace(typed), ""
-	default:
-		return "", ""
 	}
+	return "", ""
 }
 
-func firstString(obj map[string]any, keys ...string) string {
-	value := firstValue(obj, keys...)
-	return strings.TrimSpace(valueToString(value))
+func flagList(raw any) []string {
+	add := func(flags []string, flag string) []string {
+		if flag = strings.TrimSpace(flag); flag != "" {
+			return append(flags, flag)
+		}
+		return flags
+	}
+
+	switch value := raw.(type) {
+	case []any:
+		flags := make([]string, 0, len(value))
+		for _, item := range value {
+			flags = add(flags, stringValue(item))
+		}
+		return flags
+	case string:
+		var flags []string
+		for _, part := range strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ' ' || r == '|' }) {
+			flags = add(flags, part)
+		}
+		return flags
+	}
+	return nil
 }
 
-func firstValue(obj map[string]any, keys ...string) any {
+func isUnread(flags []string) bool {
+	for _, flag := range flags {
+		switch strings.TrimLeft(strings.ToLower(flag), "\\") {
+		case "seen", "read":
+			return false
+		}
+	}
+	return len(flags) > 0
+}
+
+func text(obj map[string]any, keys ...string) string {
+	return strings.TrimSpace(stringValue(value(obj, keys...)))
+}
+
+func value(obj map[string]any, keys ...string) any {
 	for _, key := range keys {
-		if value, ok := getCaseInsensitive(obj, key); ok {
+		if value, ok := lookup(obj, key); ok {
 			return value
 		}
 	}
 	return nil
 }
 
-func getCaseInsensitive(obj map[string]any, key string) (any, bool) {
+func lookup(obj map[string]any, key string) (any, bool) {
 	if value, ok := obj[key]; ok {
 		return value, true
 	}
@@ -347,24 +277,45 @@ func getCaseInsensitive(obj map[string]any, key string) (any, bool) {
 	return nil, false
 }
 
-func valueToString(value any) string {
-	switch typed := value.(type) {
+func stringValue(raw any) string {
+	switch value := raw.(type) {
 	case nil:
 		return ""
 	case string:
-		return typed
+		return value
 	case json.Number:
-		return typed.String()
-	case float64:
-		return strconv.FormatFloat(typed, 'f', -1, 64)
-	case bool:
-		if typed {
-			return "true"
-		}
-		return "false"
+		return value.String()
 	default:
-		return fmt.Sprint(typed)
+		return fmt.Sprint(value)
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func nonEmpty(values ...string) []string {
+	var out []string
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func appendFlags(args []string, flagValues ...string) []string {
+	for i := 0; i+1 < len(flagValues); i += 2 {
+		if value := strings.TrimSpace(flagValues[i+1]); value != "" {
+			args = append(args, flagValues[i], value)
+		}
+	}
+	return args
 }
 
 func isMissingExecutable(err error) bool {
@@ -373,38 +324,20 @@ func isMissingExecutable(err error) bool {
 
 func describeHimalayaFailure(failure commandFailure) error {
 	if isMissingExecutable(failure.err) {
-		return fmt.Errorf("Himalaya is not installed or not on PATH. Install and configure Himalaya, then run clibox again")
+		return errors.New("Himalaya is not installed or not on PATH. Install and configure Himalaya, then run clibox again")
 	}
-
-	output := strings.TrimSpace(failure.output())
-	if output == "" {
-		output = strings.TrimSpace(failure.err.Error())
-	}
+	output := firstNonEmpty(failure.output(), failure.err.Error())
 	return fmt.Errorf("%s failed: %s", shellCommand(failure.program, failure.args), oneLine(output))
 }
 
 func (f commandFailure) output() string {
-	parts := []string{
-		strings.TrimSpace(string(f.stderr)),
-		strings.TrimSpace(string(f.stdout)),
-	}
-	return strings.TrimSpace(strings.Join(parts, "\n"))
+	return strings.TrimSpace(strings.TrimSpace(string(f.stderr)) + "\n" + strings.TrimSpace(string(f.stdout)))
 }
 
 func looksLikeCommandShapeError(output string) bool {
-	lower := strings.ToLower(output)
-	needles := []string{
-		"unrecognized subcommand",
-		"unrecognized option",
-		"unexpected argument",
-		"unknown command",
-		"invalid subcommand",
-		"the subcommand",
-		"wasn't recognized",
-		"did you mean",
-	}
-	for _, needle := range needles {
-		if strings.Contains(lower, needle) {
+	output = strings.ToLower(output)
+	for _, needle := range []string{"unrecognized subcommand", "unrecognized option", "unexpected argument", "unknown command", "invalid subcommand", "did you mean"} {
+		if strings.Contains(output, needle) {
 			return true
 		}
 	}
@@ -412,15 +345,9 @@ func looksLikeCommandShapeError(output string) bool {
 }
 
 func shellCommand(program string, args []string) string {
-	parts := append([]string{program}, args...)
-	return strings.Join(parts, " ")
+	return strings.Join(append([]string{program}, args...), " ")
 }
 
 func oneLine(value string) string {
-	value = strings.ReplaceAll(value, "\r", " ")
-	value = strings.ReplaceAll(value, "\n", " ")
-	for strings.Contains(value, "  ") {
-		value = strings.ReplaceAll(value, "  ", " ")
-	}
-	return strings.TrimSpace(value)
+	return strings.Join(strings.Fields(value), " ")
 }
