@@ -119,11 +119,76 @@ func TestHimalayaBackendFallsBackToV2Shape(t *testing.T) {
 	if len(runner.calls) != 2 {
 		t.Fatalf("expected 2 command attempts, got %d", len(runner.calls))
 	}
-	if runner.calls[0] != "himalaya envelope list --output json --page-size 10 --folder INBOX" {
+	if runner.calls[0] != "himalaya envelope list --output json --page 1 --page-size 10 --folder INBOX" {
 		t.Fatalf("unexpected v1 command: %q", runner.calls[0])
 	}
-	if !strings.HasPrefix(runner.calls[1], "himalaya envelopes list --json --page-size 10") {
+	if !strings.HasPrefix(runner.calls[1], "himalaya envelopes list --json --page 1 --page-size 10") {
 		t.Fatalf("unexpected v2 command: %q", runner.calls[1])
+	}
+}
+
+func TestHimalayaBackendLoadsAllPages(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stdout: []byte(`[
+				{"id":"1","subject":"One","from":"Alice <alice@example.com>"},
+				{"id":"2","subject":"Two","from":"Bob <bob@example.com>"}
+			]`),
+		},
+		{
+			stdout: []byte(`[
+				{"id":"3","subject":"Three","from":"Cora <cora@example.com>"}
+			]`),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:   "himalaya",
+		mailbox:  "INBOX",
+		pageSize: 2,
+		runner:   runner,
+	}
+
+	messages, err := backend.ListEnvelopes(context.Background())
+	if err != nil {
+		t.Fatalf("expected paginated list to succeed: %v", err)
+	}
+	if len(messages) != 3 {
+		t.Fatalf("expected all 3 messages, got %+v", messages)
+	}
+	if got := strings.Join(runner.calls, "\n"); !strings.Contains(got, "--page 1") || !strings.Contains(got, "--page 2") {
+		t.Fatalf("expected page 1 and page 2 calls, got:\n%s", got)
+	}
+}
+
+func TestHimalayaBackendTreatsOutOfBoundsPageAsEnd(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stdout: []byte(`[
+				{"id":"1","subject":"One","from":"Alice <alice@example.com>"},
+				{"id":"2","subject":"Two","from":"Bob <bob@example.com>"}
+			]`),
+		},
+		{
+			stderr: []byte("page number out of bound"),
+			err:    errors.New("exit status 1"),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:   "himalaya",
+		mailbox:  "INBOX",
+		pageSize: 2,
+		runner:   runner,
+	}
+
+	messages, err := backend.ListEnvelopes(context.Background())
+	if err != nil {
+		t.Fatalf("expected out-of-bounds page to end list: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("expected first page messages to be kept, got %+v", messages)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected one successful page and one end page, got %v", runner.calls)
 	}
 }
 

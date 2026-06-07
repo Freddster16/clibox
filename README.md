@@ -17,7 +17,8 @@ through Himalaya's duplicate account wizard.
 ## Current implementation
 
 - Starts a Bubble Tea inbox TUI with keyboard navigation and theme selection.
-- Loads real envelope lists through Himalaya instead of shipping fake messages.
+- Loads real envelope lists through Himalaya instead of shipping fake messages,
+  paginating until the current mailbox is exhausted.
 - Starts setup with one email address, detects common providers, writes the
   Himalaya account config in the background, and saves the password/app password
   to macOS Keychain.
@@ -184,6 +185,10 @@ clibox --page-size 50
 clibox doctor --account personal --mailbox INBOX
 ```
 
+`--page-size` controls the number of envelopes requested from Himalaya per
+network call. It is not the mailbox limit; `clibox` keeps loading pages until
+there are no more messages.
+
 `clibox` does not write email credentials into its own config. On macOS it saves
 the password/app password to Keychain and writes a Himalaya `auth.cmd` entry that
 reads the secret from Keychain when Himalaya connects. It reads envelope data
@@ -192,7 +197,8 @@ adapter.
 The adapter currently tries the stable Himalaya v1 command first
 (`himalaya envelope list --output json`) and falls back to the in-development
 v2 shape (`himalaya envelopes list --json`) only when the command shape is
-incompatible. Runtime/setup errors, such as authentication or unknown-account
+incompatible. It paginates through the mailbox instead of capping the inbox at
+the first page. Runtime/setup errors, such as authentication or unknown-account
 failures, are shown directly instead of being hidden behind another fallback.
 
 ## Development
@@ -305,6 +311,7 @@ Done in the second implementation pass.
 The inbox list is connected to Himalaya:
 
 - Runs the configured Himalaya list command through the adapter.
+- Loads every available page instead of stopping at the first page.
 - Parses JSON into internal envelope structs.
 - Shows sender, subject, read/unread flags, and date.
 - Displays clear setup errors when Himalaya is missing or incompatible.

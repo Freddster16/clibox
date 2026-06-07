@@ -17,7 +17,7 @@ func main() {
 	account := flags.String("account", "", "Himalaya account name to read")
 	mailbox := flags.String("mailbox", "INBOX", "Himalaya mailbox/folder to read")
 	himalaya := flags.String("himalaya", "", "path to the Himalaya binary")
-	pageSize := flags.Int("page-size", 25, "number of envelopes to load")
+	pageSize := flags.Int("page-size", 100, "number of envelopes to request per page while loading the mailbox")
 	showThemes := flags.Bool("themes", false, "list available themes")
 	flags.Usage = func() {
 		fmt.Fprintf(flags.Output(), "Usage: %s [doctor] [--theme name] [--account name] [--mailbox name] [--themes]\n\n", os.Args[0])

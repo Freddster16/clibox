@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const defaultHimalayaPageSize = 25
+const defaultHimalayaPageSize = 100
 
 type inboxBackend interface {
 	ListEnvelopes(context.Context) ([]message, error)
@@ -88,29 +88,57 @@ func (h himalayaBackend) ListEnvelopes(ctx context.Context) ([]message, error) {
 		h.runner = osCommandRunner{}
 	}
 
+	var messages []message
 	var last commandFailure
-	for _, args := range h.listCandidates() {
-		stdout, stderr, err := h.runner.Run(ctx, h.binary, args)
-		if err == nil {
-			messages, parseErr := parseHimalayaMessages(stdout)
-			if parseErr != nil {
-				return nil, fmt.Errorf("Himalaya returned unreadable JSON for %s: %w", shellCommand(h.binary, args), parseErr)
-			}
-			return messages, nil
+	selectedCandidate := -1
+	for page := 1; ; page++ {
+		candidates := h.listCandidates(page)
+		if selectedCandidate >= 0 {
+			candidates = candidates[selectedCandidate : selectedCandidate+1]
 		}
 
-		last = commandFailure{program: h.binary, args: args, stdout: stdout, stderr: stderr, err: err}
-		if isMissingExecutable(err) || !looksLikeCommandShapeError(last.output()) {
+		pageLoaded := false
+		for index, args := range candidates {
+			stdout, stderr, err := h.runner.Run(ctx, h.binary, args)
+			if err == nil {
+				pageMessages, parseErr := parseHimalayaMessages(stdout)
+				if parseErr != nil {
+					return nil, fmt.Errorf("Himalaya returned unreadable JSON for %s: %w", shellCommand(h.binary, args), parseErr)
+				}
+				if selectedCandidate < 0 {
+					selectedCandidate = index
+				}
+				messages = append(messages, pageMessages...)
+				pageLoaded = true
+				if len(pageMessages) < h.pageSize {
+					return messages, nil
+				}
+				break
+			}
+
+			last = commandFailure{program: h.binary, args: args, stdout: stdout, stderr: stderr, err: err}
+			if isMissingExecutable(err) {
+				return nil, describeHimalayaFailure(last)
+			}
+			if looksLikePageEndError(last.output()) {
+				return messages, nil
+			}
+			if !looksLikeCommandShapeError(last.output()) {
+				return nil, describeHimalayaFailure(last)
+			}
+		}
+
+		if !pageLoaded {
 			return nil, describeHimalayaFailure(last)
 		}
 	}
-	return nil, describeHimalayaFailure(last)
 }
 
-func (h himalayaBackend) listCandidates() [][]string {
+func (h himalayaBackend) listCandidates(page int) [][]string {
 	size := strconv.Itoa(h.pageSize)
-	v1 := appendFlags([]string{"envelope", "list", "--output", "json", "--page-size", size}, "--account", h.account, "--folder", h.mailbox)
-	v2 := appendFlags([]string{"envelopes", "list", "--json", "--page-size", size}, "--account", h.account, "--mailbox", h.mailbox)
+	pageNumber := strconv.Itoa(page)
+	v1 := appendFlags([]string{"envelope", "list", "--output", "json", "--page", pageNumber, "--page-size", size}, "--account", h.account, "--folder", h.mailbox)
+	v2 := appendFlags([]string{"envelopes", "list", "--json", "--page", pageNumber, "--page-size", size}, "--account", h.account, "--mailbox", h.mailbox)
 	return [][]string{v1, v2}
 }
 
@@ -385,6 +413,21 @@ func looksLikeSetupPromptError(output string) bool {
 		"cannot authenticate",
 		"authenticationfailed",
 		"invalid credentials",
+	} {
+		if strings.Contains(output, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikePageEndError(output string) bool {
+	output = strings.ToLower(output)
+	for _, needle := range []string{
+		"out of bound",
+		"out-of-bound",
+		"page number too big",
+		"page too big",
 	} {
 		if strings.Contains(output, needle) {
 			return true
