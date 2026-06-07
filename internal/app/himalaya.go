@@ -328,7 +328,7 @@ func describeHimalayaFailure(failure commandFailure) error {
 	}
 	output := firstNonEmpty(failure.output(), failure.err.Error())
 	if looksLikeSetupPromptError(output) {
-		return errors.New("Himalaya is installed but not configured yet. Run `himalaya account configure` in your terminal, finish the interactive email setup, then run `clibox doctor`")
+		return errors.New("Himalaya is installed but not configured yet. Run `himalaya account configure personal` in your terminal, finish the interactive email setup, then run `clibox doctor --account personal`")
 	}
 	return fmt.Errorf("%s failed: %s", shellCommand(failure.program, failure.args), oneLine(output))
 }
