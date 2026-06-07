@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -16,13 +17,31 @@ const (
 	readerView
 )
 
+type Options struct {
+	Theme    string
+	Account  string
+	Mailbox  string
+	Himalaya string
+	PageSize int
+	backend  inboxBackend
+}
+
+type inboxLoadedMsg struct {
+	messages []message
+	err      error
+}
+
 type model struct {
 	messages          []message
+	backend           inboxBackend
 	cursor            int
 	mode              viewMode
 	showHelp          bool
 	showThemes        bool
+	loading           bool
 	status            string
+	account           string
+	mailbox           string
 	theme             int
 	themeCursor       int
 	themeBeforePicker int
@@ -202,11 +221,15 @@ func newTheme(name, description string, p palette) appTheme {
 }
 
 func New() model {
-	return NewWithTheme("")
+	return NewWithOptions(Options{})
 }
 
 func NewWithTheme(name string) model {
-	selected := strings.TrimSpace(name)
+	return NewWithOptions(Options{Theme: name})
+}
+
+func NewWithOptions(options Options) model {
+	selected := strings.TrimSpace(options.Theme)
 	if selected == "" {
 		selected = os.Getenv("CLIBOX_THEME")
 	}
@@ -217,9 +240,21 @@ func NewWithTheme(name string) model {
 		status = fmt.Sprintf("unknown theme %q; using %s", selected, appThemes[index].name)
 	}
 
+	backend := options.backend
+	if backend == nil {
+		himalaya := newHimalayaBackend(options)
+		backend = himalaya
+		if options.Mailbox == "" {
+			options.Mailbox = himalaya.mailbox
+		}
+	}
+
 	return model{
-		messages:          fakeMessages(),
+		backend:           backend,
+		loading:           true,
 		status:            status,
+		account:           strings.TrimSpace(options.Account),
+		mailbox:           strings.TrimSpace(options.Mailbox),
 		theme:             index,
 		themeCursor:       index,
 		themeBeforePicker: index,
@@ -244,11 +279,31 @@ Inside clibox:
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return m.loadInbox()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case inboxLoadedMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.status = msg.err.Error()
+			m.messages = nil
+			m.cursor = 0
+			return m, nil
+		}
+		m.messages = msg.messages
+		if len(m.messages) == 0 {
+			m.cursor = 0
+			return m.withStatus("Himalaya returned no messages for " + m.mailboxLabel()), nil
+		}
+		if m.cursor >= len(m.messages) {
+			m.cursor = len(m.messages) - 1
+		}
+		if m.cursor < 0 {
+			m.cursor = 0
+		}
+		return m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.mailboxLabel())), nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -340,7 +395,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			return m.withStatus("search arrives in Phase 5"), nil
 		case "R":
-			return m.withStatus("refresh arrives when the backend adapter exists"), nil
+			m.loading = true
+			m.status = "refreshing " + m.mailboxLabel() + " from Himalaya..."
+			return m, m.loadInbox()
 		case "t":
 			m.showThemes = true
 			m.themeCursor = m.theme
@@ -350,6 +407,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m model) loadInbox() tea.Cmd {
+	if m.backend == nil {
+		return nil
+	}
+
+	backend := m.backend
+	return func() tea.Msg {
+		messages, err := backend.ListEnvelopes(context.Background())
+		return inboxLoadedMsg{messages: messages, err: err}
+	}
 }
 
 func (m model) View() string {
@@ -391,7 +460,7 @@ func (m model) renderHeader() string {
 		return styles.header.Width(m.width).Render(truncate(fmt.Sprintf("clibox theme:%s", theme.name), m.width))
 	}
 
-	account := styles.subtitle.Render("personal@example.com")
+	account := styles.subtitle.Render(m.accountLabel())
 	count := styles.subtitle.Render(fmt.Sprintf("%d emails", len(m.messages)))
 	title := styles.title.Render("clibox")
 	badge := styles.themeBadge.Render("theme " + theme.name)
@@ -451,7 +520,7 @@ func (m model) renderMailboxRail(width, height int) string {
 
 	lines := []string{
 		styles.panelTitle.Render("Mailboxes"),
-		styles.selected.Width(width).Render(fmt.Sprintf("> INBOX %7d", len(m.messages))),
+		styles.selected.Width(width).Render(fmt.Sprintf("> %-8s %4d", truncate(m.mailboxLabel(), 8), len(m.messages))),
 		styles.rowAlt.Width(width).Render(fmt.Sprintf("  Unread %6d", unread)),
 		styles.row.Width(width).Render("  Archive"),
 		styles.rowAlt.Width(width).Render("  Sent"),
@@ -461,13 +530,20 @@ func (m model) renderMailboxRail(width, height int) string {
 		styles.themeBadge.Width(width).Render(m.activeTheme().name),
 		styles.screen.Width(width).Render(""),
 		styles.panelTitle.Render("Accounts"),
-		styles.row.Width(width).Render("  personal"),
+		styles.row.Width(width).Render("  " + truncate(m.accountLabel(), max(1, width-2))),
 	}
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
 
 func (m model) renderRows(width, height int) []string {
 	styles := m.activeTheme().styles
+	if m.loading {
+		return []string{styles.row.Width(width).Render(truncate("  Loading inbox from Himalaya...", width))}
+	}
+	if len(m.messages) == 0 {
+		return []string{styles.row.Width(width).Render(truncate("  No messages loaded. Press R to retry.", width))}
+	}
+
 	rows := make([]string, 0, len(m.messages))
 	visible := max(1, height)
 	start := scrollStart(m.cursor, visible, len(m.messages))
@@ -517,6 +593,15 @@ func (m model) renderRows(width, height int) []string {
 
 func (m model) renderPreview(width, height int) string {
 	styles := m.activeTheme().styles
+	if len(m.messages) == 0 {
+		lines := []string{
+			styles.panelTitle.Render("Reader"),
+			styles.readerBody.Width(width).Render(""),
+			styles.readerBody.Width(width).Render("Configure Himalaya, then press R to load your inbox."),
+		}
+		return fitHeight(strings.Join(lines, "\n"), height)
+	}
+
 	msg := m.selectedMessage()
 	lines := []string{
 		styles.panelTitle.Render("Reader"),
@@ -531,8 +616,17 @@ func (m model) renderPreview(width, height int) string {
 
 func (m model) renderReader(height int) string {
 	styles := m.activeTheme().styles
-	msg := m.selectedMessage()
 	width := max(32, m.width)
+	if len(m.messages) == 0 {
+		lines := []string{
+			styles.panelTitle.Render("Reader"),
+			styles.readerBody.Width(width).Render("No message selected."),
+			styles.readerBody.Width(width).Render("Configure Himalaya, then press R to load your inbox."),
+		}
+		return fitHeight(strings.Join(lines, "\n"), height)
+	}
+
+	msg := m.selectedMessage()
 	lines := []string{
 		styles.panelTitle.Render("Reader"),
 		styles.readerHeader.Width(width).Render("From: " + msg.From + " <" + msg.Email + ">"),
@@ -547,7 +641,7 @@ func (m model) renderReader(height int) string {
 func (m model) renderFooter() string {
 	styles := m.activeTheme().styles
 	themeHint := fmt.Sprintf("theme %s: t themes", m.activeTheme().name)
-	hints := themeHint + "  |  j/k move  enter read  r reply  c compose  a archive  / search  ? help  q quit"
+	hints := themeHint + "  |  j/k move  enter read  R refresh  r reply  c compose  a archive  / search  ? help  q quit"
 	if m.mode == readerView {
 		hints = themeHint + "  |  b back  r reply  a archive  d delete  ? help  q back"
 	}
@@ -572,7 +666,7 @@ func (m model) overlayHelp(content string) string {
 		"a          archive selected email (planned)",
 		"d          delete selected email (planned)",
 		"/          search current mailbox (planned)",
-		"R          refresh inbox (planned)",
+		"R          refresh inbox from Himalaya",
 		"t          open theme picker",
 		"?          close this help",
 		"q          quit or close current view",
@@ -695,6 +789,20 @@ func (m model) activeTheme() appTheme {
 		index += len(appThemes)
 	}
 	return appThemes[index]
+}
+
+func (m model) accountLabel() string {
+	if strings.TrimSpace(m.account) != "" {
+		return m.account
+	}
+	return "default account"
+}
+
+func (m model) mailboxLabel() string {
+	if strings.TrimSpace(m.mailbox) != "" {
+		return m.mailbox
+	}
+	return "INBOX"
 }
 
 func themeIndexFromEnv(value string) int {

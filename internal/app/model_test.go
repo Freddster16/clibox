@@ -8,7 +8,7 @@ import (
 )
 
 func TestInboxNavigation(t *testing.T) {
-	m := New()
+	m := newTestModel()
 
 	m = pressKey(t, m, "j")
 	if m.cursor != 1 {
@@ -22,7 +22,7 @@ func TestInboxNavigation(t *testing.T) {
 }
 
 func TestOpenReaderAndBack(t *testing.T) {
-	m := New()
+	m := newTestModel()
 	if !m.messages[0].Unread {
 		t.Fatal("expected first fake message to start unread")
 	}
@@ -42,7 +42,7 @@ func TestOpenReaderAndBack(t *testing.T) {
 }
 
 func TestHelpOverlayConsumesNavigation(t *testing.T) {
-	m := New()
+	m := newTestModel()
 
 	m = pressKey(t, m, "?")
 	if !m.showHelp {
@@ -67,7 +67,7 @@ func TestHelpOverlayConsumesNavigation(t *testing.T) {
 }
 
 func TestQuitFromInbox(t *testing.T) {
-	m := New()
+	m := newTestModel()
 
 	_, cmd := m.Update(keyMsg("q"))
 	if cmd == nil {
@@ -76,7 +76,7 @@ func TestQuitFromInbox(t *testing.T) {
 }
 
 func TestPlannedActionsShowStatus(t *testing.T) {
-	m := New()
+	m := newTestModel()
 
 	m = pressKey(t, m, "a")
 	if m.status == "" {
@@ -91,7 +91,7 @@ func TestPlannedActionsShowStatus(t *testing.T) {
 
 func TestThemeKeyOpensThemePicker(t *testing.T) {
 	t.Setenv("CLIBOX_THEME", "")
-	m := New()
+	m := newTestModel()
 
 	m = pressKey(t, m, "t")
 	if !m.showThemes {
@@ -258,6 +258,14 @@ func pressKey(t *testing.T, m model, key string) model {
 		t.Fatalf("expected model update to return app model, got %T", next)
 	}
 	return updated
+}
+
+func newTestModel() model {
+	m := New()
+	m.messages = fakeMessages()
+	m.loading = false
+	m.status = ""
+	return m
 }
 
 func keyMsg(key string) tea.KeyMsg {

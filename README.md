@@ -8,8 +8,9 @@ at home next to Neovim, Codex, OpenCode, Hermes, tmux, and a shell: open the
 inbox, move with `j/k`, read with `Enter`, reply in `$EDITOR`, archive with
 `a`, search with `/`, change themes with `t`, and quit with `q`.
 
-Status: Phase 1 is implemented. `clibox` currently opens a fake inbox TUI so
-the keyboard flow and layout can be tested before real email is connected.
+Status: Phase 2 is implemented. `clibox` now loads the envelope list from
+Himalaya after Himalaya is installed and configured. The reader still shows
+envelope-level content only until Phase 3 wires full message bodies.
 
 ## Install
 
@@ -29,8 +30,8 @@ For local development:
 go run .
 ```
 
-Phase 1 does not require an email account. It uses fake messages so the TUI can
-be tested immediately.
+Phase 2 requires Himalaya for real inbox data. If Himalaya is missing or not yet
+configured, `clibox` shows a setup error in the footer instead of crashing.
 
 If you already installed `clibox` and want the latest UI changes:
 
@@ -86,13 +87,13 @@ Theme selection lives inside the TUI:
 - Press `Enter` to apply the selected theme.
 - Press `Esc` to cancel and return to the previous theme.
 
-## Planned real-email quick start
+## Real-email quick start
 
-`clibox` should rely on [Himalaya](https://github.com/pimalaya/himalaya) for
-email protocols at first. Himalaya already handles the hard parts: accounts,
+`clibox` relies on [Himalaya](https://github.com/pimalaya/himalaya) for email
+protocols at first. Himalaya already handles the hard parts: accounts,
 IMAP/JMAP/SMTP, message envelopes, folders, authentication, and sending.
 
-Planned flow:
+Flow:
 
 ```sh
 # 1. Install and configure Himalaya first.
@@ -109,8 +110,21 @@ clibox --mailbox INBOX
 clibox doctor
 ```
 
-`clibox` should not store email credentials. It should read account metadata
-from the existing Himalaya setup and keep only UI preferences in its own config.
+Useful launch flags:
+
+```sh
+clibox --account personal --mailbox INBOX
+clibox --himalaya /path/to/himalaya
+clibox --page-size 50
+clibox doctor --account personal --mailbox INBOX
+```
+
+`clibox` does not store email credentials. It reads envelope data through the
+existing Himalaya setup and keeps command details inside the backend adapter.
+The adapter currently tries the stable Himalaya v1 command first
+(`himalaya envelope list --output json`) and falls back to the in-development
+v2 shape (`himalaya envelopes list --json`) only when the command shape is
+incompatible.
 
 ## Planned interface
 
@@ -189,12 +203,15 @@ Build the TUI without touching real email:
 
 ### Phase 2: Real envelope list
 
-Connect the inbox list to Himalaya:
+Done in the second implementation pass.
 
-- Run the configured Himalaya list command through the adapter.
-- Parse JSON into internal envelope structs.
-- Show sender, subject, flags, and date.
-- Display clear setup errors when Himalaya is missing or incompatible.
+The inbox list is connected to Himalaya:
+
+- Runs the configured Himalaya list command through the adapter.
+- Parses JSON into internal envelope structs.
+- Shows sender, subject, read/unread flags, and date.
+- Displays clear setup errors when Himalaya is missing or incompatible.
+- Refreshes the current envelope list with `R`.
 
 ### Phase 3: Real message reader
 

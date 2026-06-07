@@ -1,7 +1,7 @@
 package app
 
 type message struct {
-	ID      int
+	ID      string
 	From    string
 	Email   string
 	Subject string
@@ -14,7 +14,7 @@ type message struct {
 func fakeMessages() []message {
 	return []message{
 		{
-			ID:      1,
+			ID:      "1",
 			From:    "Alice",
 			Email:   "alice@example.com",
 			Subject: "Re: Design notes",
@@ -37,7 +37,7 @@ Alice`,
 			Unread: true,
 		},
 		{
-			ID:      2,
+			ID:      "2",
 			From:    "GitHub",
 			Email:   "notifications@github.com",
 			Subject: "New issue assigned",
@@ -53,7 +53,7 @@ independent from command spelling so Himalaya version changes stay contained.`,
 			Unread: true,
 		},
 		{
-			ID:      3,
+			ID:      "3",
 			From:    "Vercel",
 			Email:   "noreply@vercel.com",
 			Subject: "Deployment failed",
@@ -69,7 +69,7 @@ The failure is from a missing module dependency. Run go mod tidy locally and
 push the generated go.sum file with the next change.`,
 		},
 		{
-			ID:      4,
+			ID:      "4",
 			From:    "Mom",
 			Email:   "mom@example.com",
 			Subject: "Dinner",
@@ -81,7 +81,7 @@ Bring the good stories. Also, please do not spend the whole meal explaining why
 email is better in a terminal unless someone asks first.`,
 		},
 		{
-			ID:      5,
+			ID:      "5",
 			From:    "Himalaya",
 			Email:   "pimalaya@example.org",
 			Subject: "Backend adapter notes",
