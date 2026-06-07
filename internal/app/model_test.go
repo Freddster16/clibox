@@ -88,6 +88,29 @@ func TestPlannedActionsShowStatus(t *testing.T) {
 	}
 }
 
+func TestThemeCycleShowsStatus(t *testing.T) {
+	t.Setenv("CLIBOX_THEME", "")
+	m := New()
+	nextTheme := appThemes[(m.theme+1)%len(appThemes)].name
+
+	m = pressKey(t, m, "t")
+	if got := m.activeTheme().name; got != nextTheme {
+		t.Fatalf("expected active theme %q, got %q", nextTheme, got)
+	}
+	if want := "theme switched to " + nextTheme; m.status != want {
+		t.Fatalf("expected theme status %q, got %q", want, m.status)
+	}
+}
+
+func TestThemeCanBeSelectedFromEnvironment(t *testing.T) {
+	t.Setenv("CLIBOX_THEME", "lagoon")
+
+	m := New()
+	if got := m.activeTheme().name; got != "Lagoon" {
+		t.Fatalf("expected CLIBOX_THEME to select Lagoon, got %q", got)
+	}
+}
+
 func pressKey(t *testing.T, m model, key string) model {
 	t.Helper()
 

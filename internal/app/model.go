@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,11 +22,13 @@ type model struct {
 	mode     viewMode
 	showHelp bool
 	status   string
+	theme    int
 	width    int
 	height   int
 }
 
 type styles struct {
+	row          lipgloss.Style
 	title        lipgloss.Style
 	subtitle     lipgloss.Style
 	panelTitle   lipgloss.Style
@@ -35,44 +38,122 @@ type styles struct {
 	footer       lipgloss.Style
 	helpPanel    lipgloss.Style
 	readerHeader lipgloss.Style
+	themeBadge   lipgloss.Style
 }
 
-var theme = styles{
-	title: lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("230")).
-		Background(lipgloss.Color("24")).
-		Padding(0, 1),
-	subtitle: lipgloss.NewStyle().
-		Foreground(lipgloss.Color("247")),
-	panelTitle: lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("81")),
-	selected: lipgloss.NewStyle().
-		Foreground(lipgloss.Color("230")).
-		Background(lipgloss.Color("24")),
-	unread: lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("230")),
-	muted: lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")),
-	footer: lipgloss.NewStyle().
-		Foreground(lipgloss.Color("246")).
-		Background(lipgloss.Color("235")).
-		Padding(0, 1),
-	helpPanel: lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("24")).
-		Padding(1, 2),
-	readerHeader: lipgloss.NewStyle().
-		Foreground(lipgloss.Color("230")).
-		Background(lipgloss.Color("236")).
-		Padding(0, 1),
+type appTheme struct {
+	name   string
+	styles styles
+}
+
+type palette struct {
+	accent       string
+	accentText   string
+	accentSoft   string
+	background   string
+	surface      string
+	text         string
+	muted        string
+	selected     string
+	selectedText string
+	unread       string
+	border       string
+}
+
+var appThemes = []appTheme{
+	newTheme("Nocturne", palette{
+		accent:       "39",
+		accentText:   "230",
+		accentSoft:   "219",
+		background:   "234",
+		surface:      "236",
+		text:         "252",
+		muted:        "245",
+		selected:     "24",
+		selectedText: "230",
+		unread:       "159",
+		border:       "63",
+	}),
+	newTheme("Copper", palette{
+		accent:       "166",
+		accentText:   "230",
+		accentSoft:   "222",
+		background:   "234",
+		surface:      "235",
+		text:         "252",
+		muted:        "246",
+		selected:     "94",
+		selectedText: "230",
+		unread:       "209",
+		border:       "130",
+	}),
+	newTheme("Lagoon", palette{
+		accent:       "37",
+		accentText:   "230",
+		accentSoft:   "121",
+		background:   "234",
+		surface:      "236",
+		text:         "252",
+		muted:        "245",
+		selected:     "29",
+		selectedText: "230",
+		unread:       "123",
+		border:       "74",
+	}),
+}
+
+func newTheme(name string, p palette) appTheme {
+	return appTheme{
+		name: name,
+		styles: styles{
+			row: lipgloss.NewStyle().
+				Foreground(lipgloss.Color(p.text)),
+			title: lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color(p.accentText)).
+				Background(lipgloss.Color(p.accent)).
+				Padding(0, 1),
+			subtitle: lipgloss.NewStyle().
+				Foreground(lipgloss.Color(p.muted)),
+			panelTitle: lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color(p.accentSoft)),
+			selected: lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color(p.selectedText)).
+				Background(lipgloss.Color(p.selected)),
+			unread: lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color(p.unread)),
+			muted: lipgloss.NewStyle().
+				Foreground(lipgloss.Color(p.muted)),
+			footer: lipgloss.NewStyle().
+				Foreground(lipgloss.Color(p.text)).
+				Background(lipgloss.Color(p.surface)).
+				Padding(0, 1),
+			helpPanel: lipgloss.NewStyle().
+				Foreground(lipgloss.Color(p.text)).
+				Background(lipgloss.Color(p.background)).
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color(p.border)).
+				Padding(1, 2),
+			readerHeader: lipgloss.NewStyle().
+				Foreground(lipgloss.Color(p.text)).
+				Background(lipgloss.Color(p.surface)).
+				Padding(0, 1),
+			themeBadge: lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color(p.accentSoft)).
+				Background(lipgloss.Color(p.surface)).
+				Padding(0, 1),
+		},
+	}
 }
 
 func New() model {
 	return model{
 		messages: fakeMessages(),
+		theme:    themeIndexFromEnv(os.Getenv("CLIBOX_THEME")),
 	}
 }
 
@@ -143,6 +224,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.withStatus("search arrives in Phase 5"), nil
 		case "R":
 			return m.withStatus("refresh arrives when the backend adapter exists"), nil
+		case "t":
+			m.theme = (m.theme + 1) % len(appThemes)
+			return m.withStatus("theme switched to " + m.activeTheme().name), nil
 		}
 	}
 
@@ -178,33 +262,42 @@ func (m model) renderCurrentView() string {
 }
 
 func (m model) renderHeader() string {
-	account := theme.subtitle.Render("personal@example.com")
-	count := theme.subtitle.Render(fmt.Sprintf("%d emails", len(m.messages)))
-	title := theme.title.Render("clibox")
-	gap := max(1, m.width-lipgloss.Width(title)-lipgloss.Width(account)-lipgloss.Width(count)-4)
-	return title + " " + account + strings.Repeat(" ", gap) + count
+	theme := m.activeTheme()
+	styles := theme.styles
+	account := styles.subtitle.Render("personal@example.com")
+	count := styles.subtitle.Render(fmt.Sprintf("%d emails", len(m.messages)))
+	title := styles.title.Render("clibox")
+	right := count
+	if m.width >= 72 {
+		right = styles.themeBadge.Render(theme.name) + " " + count
+	}
+	left := title + " " + account
+	gap := max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
+	return left + strings.Repeat(" ", gap) + right
 }
 
 func (m model) renderInbox(height int) string {
+	styles := m.activeTheme().styles
 	if m.width >= 96 {
 		return m.renderWideInbox(height)
 	}
 
-	lines := []string{theme.panelTitle.Render("Inbox")}
+	lines := []string{styles.panelTitle.Render("Inbox")}
 	lines = append(lines, m.renderRows(m.width, height-3)...)
 	lines = append(lines, "")
-	lines = append(lines, theme.muted.Render("Enter opens the selected message. Press ? for help."))
+	lines = append(lines, styles.muted.Render("Enter opens the selected message. Press ? for help."))
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
 
 func (m model) renderWideInbox(height int) string {
+	styles := m.activeTheme().styles
 	railWidth := 18
 	listWidth := min(52, max(38, m.width/2))
 	readerWidth := max(24, m.width-railWidth-listWidth-4)
 
 	rail := m.renderMailboxRail(railWidth, height)
 	list := strings.Join(append(
-		[]string{theme.panelTitle.Render("Inbox")},
+		[]string{styles.panelTitle.Render("Inbox")},
 		m.renderRows(listWidth, height-1)...,
 	), "\n")
 	preview := m.renderPreview(readerWidth, height)
@@ -220,6 +313,7 @@ func (m model) renderWideInbox(height int) string {
 }
 
 func (m model) renderMailboxRail(width, height int) string {
+	styles := m.activeTheme().styles
 	unread := 0
 	for _, msg := range m.messages {
 		if msg.Unread {
@@ -228,20 +322,21 @@ func (m model) renderMailboxRail(width, height int) string {
 	}
 
 	lines := []string{
-		theme.panelTitle.Render("Mailboxes"),
-		theme.selected.Width(width).Render(fmt.Sprintf("> INBOX %7d", len(m.messages))),
-		theme.muted.Render(fmt.Sprintf("  Unread %6d", unread)),
+		styles.panelTitle.Render("Mailboxes"),
+		styles.selected.Width(width).Render(fmt.Sprintf("> INBOX %7d", len(m.messages))),
+		styles.muted.Render(fmt.Sprintf("  Unread %6d", unread)),
 		"  Archive",
 		"  Sent",
 		"  Drafts",
 		"",
-		theme.panelTitle.Render("Accounts"),
+		styles.panelTitle.Render("Accounts"),
 		"  personal",
 	}
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
 
 func (m model) renderRows(width, height int) []string {
+	styles := m.activeTheme().styles
 	rows := make([]string, 0, len(m.messages))
 	visible := max(1, height)
 	start := scrollStart(m.cursor, visible, len(m.messages))
@@ -273,12 +368,12 @@ func (m model) renderRows(width, height int) []string {
 			truncate(msg.Date, dateWidth),
 		)
 
-		style := lipgloss.NewStyle()
+		style := styles.row
 		if msg.Unread {
-			style = theme.unread
+			style = styles.unread
 		}
 		if i == m.cursor {
-			style = theme.selected.Width(width)
+			style = styles.selected.Width(width)
 		}
 		rows = append(rows, style.Render(truncate(line, width)))
 	}
@@ -287,12 +382,13 @@ func (m model) renderRows(width, height int) []string {
 }
 
 func (m model) renderPreview(width, height int) string {
+	styles := m.activeTheme().styles
 	msg := m.selectedMessage()
 	lines := []string{
-		theme.panelTitle.Render("Reader"),
-		theme.readerHeader.Width(width).Render("From: " + msg.From + " <" + msg.Email + ">"),
-		theme.readerHeader.Width(width).Render("Subject: " + msg.Subject),
-		theme.readerHeader.Width(width).Render("Date: " + msg.Date),
+		styles.panelTitle.Render("Reader"),
+		styles.readerHeader.Width(width).Render("From: " + msg.From + " <" + msg.Email + ">"),
+		styles.readerHeader.Width(width).Render("Subject: " + msg.Subject),
+		styles.readerHeader.Width(width).Render("Date: " + msg.Date),
 		"",
 	}
 	lines = append(lines, wrapText(msg.Preview+"\n\n"+msg.Body, width)...)
@@ -300,13 +396,14 @@ func (m model) renderPreview(width, height int) string {
 }
 
 func (m model) renderReader(height int) string {
+	styles := m.activeTheme().styles
 	msg := m.selectedMessage()
 	width := max(32, m.width)
 	lines := []string{
-		theme.panelTitle.Render("Reader"),
-		theme.readerHeader.Width(width).Render("From: " + msg.From + " <" + msg.Email + ">"),
-		theme.readerHeader.Width(width).Render("Subject: " + msg.Subject),
-		theme.readerHeader.Width(width).Render("Date: " + msg.Date),
+		styles.panelTitle.Render("Reader"),
+		styles.readerHeader.Width(width).Render("From: " + msg.From + " <" + msg.Email + ">"),
+		styles.readerHeader.Width(width).Render("Subject: " + msg.Subject),
+		styles.readerHeader.Width(width).Render("Date: " + msg.Date),
 		"",
 	}
 	lines = append(lines, wrapText(msg.Body, width-2)...)
@@ -314,19 +411,21 @@ func (m model) renderReader(height int) string {
 }
 
 func (m model) renderFooter() string {
-	hints := "j/k move  enter read  r reply  c compose  a archive  / search  ? help  q quit"
+	styles := m.activeTheme().styles
+	hints := "j/k move  enter read  r reply  c compose  a archive  / search  t theme  ? help  q quit"
 	if m.mode == readerView {
-		hints = "b back  r reply  a archive  d delete  ? help  q back"
+		hints = "b back  r reply  a archive  d delete  t theme  ? help  q back"
 	}
 	if m.status != "" {
 		hints = m.status + "  |  " + hints
 	}
-	return theme.footer.Width(m.width).Render(truncate(hints, max(1, m.width-2)))
+	return styles.footer.Width(m.width).Render(truncate(hints, max(1, m.width-2)))
 }
 
 func (m model) overlayHelp(content string) string {
+	styles := m.activeTheme().styles
 	help := strings.Join([]string{
-		theme.panelTitle.Render("Help"),
+		styles.panelTitle.Render("Help"),
 		"",
 		"j / k      move down / up",
 		"Enter      open selected email",
@@ -337,11 +436,12 @@ func (m model) overlayHelp(content string) string {
 		"d          delete selected email (planned)",
 		"/          search current mailbox (planned)",
 		"R          refresh inbox (planned)",
+		"t          cycle color theme",
 		"?          close this help",
 		"q          quit or close current view",
 	}, "\n")
 
-	panel := theme.helpPanel.Width(min(58, max(30, m.width-8))).Render(help)
+	panel := styles.helpPanel.Width(min(58, max(30, m.width-8))).Render(help)
 	topPad := max(0, (m.height-lipgloss.Height(panel))/3)
 	leftPad := max(0, (m.width-lipgloss.Width(panel))/2)
 	overlay := strings.Repeat("\n", topPad) + lipgloss.NewStyle().MarginLeft(leftPad).Render(panel)
@@ -371,6 +471,30 @@ func (m model) selectedMessage() message {
 func (m model) withStatus(text string) model {
 	m.status = text
 	return m
+}
+
+func (m model) activeTheme() appTheme {
+	if len(appThemes) == 0 {
+		return appTheme{name: "Default"}
+	}
+	index := m.theme % len(appThemes)
+	if index < 0 {
+		index += len(appThemes)
+	}
+	return appThemes[index]
+}
+
+func themeIndexFromEnv(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	for i, theme := range appThemes {
+		if strings.EqualFold(theme.name, value) {
+			return i
+		}
+	}
+	return 0
 }
 
 func scrollStart(cursor, visible, total int) int {

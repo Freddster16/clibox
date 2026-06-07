@@ -6,7 +6,7 @@ coding flow to read and reply to email.
 The goal is a real keyboard-first email TUI, not a web wrapper. It should feel
 at home next to Neovim, Codex, OpenCode, Hermes, tmux, and a shell: open the
 inbox, move with `j/k`, read with `Enter`, reply in `$EDITOR`, archive with
-`a`, search with `/`, and quit with `q`.
+`a`, search with `/`, change themes with `t`, and quit with `q`.
 
 Status: Phase 1 is implemented. `clibox` currently opens a fake inbox TUI so
 the keyboard flow and layout can be tested before real email is connected.
@@ -52,7 +52,7 @@ Mailboxes          Inbox                         Reader
 
                                                   I looked at the prototype...
 
-j/k move  enter read  r reply  c compose  a archive  / search  ? help  q quit
+j/k move  enter read  r reply  c compose  a archive  / search  t theme  ? help  q quit
 ```
 
 On wide terminals, `clibox` should show a mailbox rail, inbox list, and reader
@@ -65,7 +65,18 @@ The first run should be boring in the best way:
 2. Pick an account if more than one account exists.
 3. Land in the inbox.
 4. Press `Enter` to read, `b` to go back, `r` to reply, `a` to archive, `/` to
-   search, and `q` to leave.
+   search, `t` to cycle themes, and `q` to leave.
+
+## Themes
+
+`clibox` ships with three terminal-friendly color themes: Nocturne, Copper, and
+Lagoon. Press `t` inside the TUI to cycle between them.
+
+To start with a specific theme:
+
+```sh
+CLIBOX_THEME=lagoon clibox
+```
 
 ## Planned real-email quick start
 
@@ -124,6 +135,7 @@ Default keymap:
 | `d` | Delete selected email, with confirmation |
 | `/` | Search current mailbox |
 | `R` | Refresh inbox |
+| `t` | Cycle color theme |
 | `?` | Show contextual help |
 | `q` | Quit or close current view |
 
@@ -139,7 +151,8 @@ Build `clibox` in Go:
   loop, keyboard handling, and screen rendering.
 - Components: [Bubbles table](https://charm-docs.vercel.app/docs/bubbles/components/table)
   for scrollable inbox rows, plus viewport/text input components where useful.
-- Styling: Lip Gloss for a quiet terminal-native layout with clear focus states.
+- Styling: Lip Gloss themes with clear focus states, readable status areas, and
+  a quick `t` theme switcher.
 - Backend: a Himalaya adapter that calls the CLI and parses JSON where
   available.
 - Drafts: create temporary draft files, open `$EDITOR` with `nvim` as the
