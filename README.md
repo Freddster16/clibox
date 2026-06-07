@@ -10,14 +10,17 @@ inbox, move with `j/k`, read with `Enter`, reply in `$EDITOR`, archive with
 
 Status: Phase 2 is implemented. `clibox` now loads the envelope list from
 Himalaya after Himalaya is installed and configured. The reader still shows
-envelope-level content only until Phase 3 wires full message bodies.
+envelope-level content only until Phase 3 wires full message bodies. First-run
+setup now happens inside `clibox` for common providers instead of sending you
+through Himalaya's duplicate account wizard.
 
 ## Current implementation
 
 - Starts a Bubble Tea inbox TUI with keyboard navigation and theme selection.
 - Loads real envelope lists through Himalaya instead of shipping fake messages.
-- Starts setup with an email address, detects common providers, and explains
-  app-password or bridge requirements before opening Himalaya's wizard.
+- Starts setup with one email address, detects common providers, writes the
+  Himalaya account config in the background, and saves the password/app password
+  to macOS Keychain.
 - Supports `--account`, `--mailbox`, `--himalaya`, and `--page-size`.
 - Refreshes the envelope list with `R`.
 - Provides `clibox doctor` for setup checks before opening the TUI.
@@ -51,10 +54,14 @@ go run .
 
 Phase 2 requires Himalaya for real inbox data. If Himalaya is missing or not yet
 configured, `clibox` shows a setup error in the footer instead of crashing.
-If Himalaya needs an account, `clibox` asks for your email address inside the
-TUI, detects the provider, explains what password/app password/bridge detail is
-needed, then temporarily opens Himalaya's interactive setup wizard in the same
-terminal. When the wizard exits, `clibox` reloads your inbox.
+If Himalaya needs an account, `clibox` asks for your email address once, detects
+the provider, chooses known IMAP/SMTP settings, asks for the required password or
+app password, writes `~/.config/himalaya/config.toml`, stores the secret in
+macOS Keychain, and reloads your inbox.
+
+Automatic secret storage is macOS-first right now. On other platforms, manual
+Himalaya setup is still available until `clibox` grows a portable secret-store
+adapter.
 
 If you already installed `clibox` and want the latest UI changes:
 
@@ -93,8 +100,9 @@ The first run should be boring in the best way:
 
 1. Run `clibox`.
 2. If setup is needed, type your email address in the TUI and press `Enter`.
-3. Land in the inbox.
-4. Press `Enter` to read, `b` to go back, `r` to reply, `a` to archive, `/` to
+3. Paste the provider password or app password once.
+4. Land in the inbox.
+5. Press `Enter` to read, `b` to go back, `r` to reply, `a` to archive, `/` to
    search, `t` to open the theme picker, and `q` to leave.
 
 ## Themes
@@ -124,12 +132,12 @@ clibox
 
 # 2. If clibox asks for setup, type your email address and press Enter.
 # clibox detects providers like Gmail, iCloud, Outlook, Yahoo, Fastmail,
-# and Proton Mail, then explains the exact auth detail to prepare.
+# and Proton Mail.
 
 # 3. Press o on the review screen to open the provider setup page in your browser.
 
-# 4. Press Enter on the review screen.
-# Himalaya's setup wizard opens in the same terminal.
+# 4. Press Enter on the review screen, then paste the password/app password.
+# clibox writes Himalaya's IMAP/SMTP config and saves the secret to Keychain.
 
 # 5. Optionally choose account or mailbox at launch after setup exists.
 clibox --account personal
@@ -148,16 +156,16 @@ himalaya envelope list --output json --page-size 5 --account personal --folder I
 
 Provider guidance currently covers:
 
-- Gmail and Google Mail: opens Google's app-password page, then uses the app
-  password and full email username.
-- iCloud Mail: Apple app-specific password.
-- Outlook, Hotmail, Live, and MSN: app password or enabled IMAP access when
-  required.
-- Yahoo Mail: Yahoo app password.
-- Fastmail: Fastmail app password.
+- Gmail and Google Mail: Gmail IMAP/SMTP settings, Google app password, and the
+  full email address as username.
+- iCloud Mail: iCloud IMAP/SMTP settings and Apple app-specific password.
+- Outlook, Hotmail, Live, and MSN: Outlook IMAP/SMTP settings, with a warning
+  that some Microsoft accounts require Modern Auth/OAuth.
+- Yahoo Mail: Yahoo IMAP/SMTP settings and Yahoo app password.
+- Fastmail: Fastmail IMAP/SMTP settings and Fastmail app password.
 - Proton Mail: Proton Mail Bridge warning before manual Bridge settings.
-- Custom domains: automatic discovery first, then manual IMAP/SMTP only if the
-  provider requires it.
+- Custom domains: manual IMAP/SMTP settings are still needed before automatic
+  background setup can cover them.
 
 Full Gmail browser OAuth is a planned upgrade. Google supports OAuth for
 Gmail IMAP/SMTP through XOAUTH2, but that flow requires a registered Google
@@ -175,8 +183,11 @@ clibox --page-size 50
 clibox doctor --account personal --mailbox INBOX
 ```
 
-`clibox` does not store email credentials. It reads envelope data through the
-existing Himalaya setup and keeps command details inside the backend adapter.
+`clibox` does not write email credentials into its own config. On macOS it saves
+the password/app password to Keychain and writes a Himalaya `auth.cmd` entry that
+reads the secret from Keychain when Himalaya connects. It reads envelope data
+through the existing Himalaya setup and keeps command details inside the backend
+adapter.
 The adapter currently tries the stable Himalaya v1 command first
 (`himalaya envelope list --output json`) and falls back to the in-development
 v2 shape (`himalaya envelopes list --json`) only when the command shape is
@@ -239,7 +250,7 @@ Default keymap:
 | `d` | Delete selected email, with confirmation |
 | `/` | Search current mailbox |
 | `R` | Refresh inbox |
-| `A` | Configure a Himalaya account inside the TUI |
+| `A` | Add or update an email account inside the TUI |
 | `t` | Cycle color theme |
 | `?` | Show contextual help |
 | `q` | Quit or close current view |
@@ -260,6 +271,8 @@ Build `clibox` in Go:
   a quick `t` theme switcher.
 - Backend: a Himalaya adapter that calls the CLI and parses JSON where
   available.
+- Account setup: provider detection plus generated Himalaya config for common
+  IMAP/SMTP providers, with secrets stored in macOS Keychain.
 - Drafts: create temporary draft files, open `$EDITOR` with `nvim` as the
   fallback, then send through Himalaya after the editor exits.
 - Config: TOML at `~/.config/clibox/config.toml`.

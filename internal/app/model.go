@@ -55,6 +55,7 @@ type model struct {
 	mailbox           string
 	setupEmail        string
 	setupAccount      string
+	setupSecret       string
 	setupProvider     providerInfo
 	setupStep         setupStep
 	configuring       bool
@@ -339,6 +340,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.account = strings.TrimSpace(msg.account)
 		m.setupAccount = m.account
+		m.setupSecret = ""
 		if backend, ok := m.backend.(accountSetupBackend); ok {
 			m.backend = backend.WithAccount(m.account)
 		}
@@ -483,6 +485,10 @@ func (m model) updateSetup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setupStep = setupEmailStep
 			return m.withStatus("edit your email address, then press Enter"), nil
 		}
+		if m.setupStep == setupSecretStep {
+			m.setupStep = setupReviewStep
+			return m.withStatus("review setup, then press Enter"), nil
+		}
 		if m.setupStep == setupAccountStep {
 			m.setupStep = setupReviewStep
 			return m.withStatus("review setup, then press Enter"), nil
@@ -497,6 +503,8 @@ func (m model) updateSetup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.setupStep {
 	case setupEmailStep:
 		return m.updateSetupEmail(msg)
+	case setupSecretStep:
+		return m.updateSetupSecret(msg)
 	case setupAccountStep:
 		return m.updateSetupAccount(msg)
 	default:
@@ -541,7 +549,16 @@ func (m model) updateSetupEmail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) updateSetupReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
-		return m.startAccountConfiguration()
+		provider := m.setupProvider
+		if provider.Name == "" {
+			provider = detectProvider(m.setupEmail)
+		}
+		if !provider.canAutoConfigure() {
+			return m.withStatus(provider.Name + " needs manual server settings before automatic setup can run"), nil
+		}
+		m.setupProvider = provider
+		m.setupStep = setupSecretStep
+		return m.withStatus("paste your " + strings.ToLower(provider.secretLabel()) + ", then press Enter"), nil
 	case "o":
 		provider := m.setupProvider
 		if provider.Name == "" {
@@ -560,6 +577,46 @@ func (m model) updateSetupReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "n":
 		m.setupStep = setupAccountStep
 		return m.withStatus("edit the local account name, then press Enter"), nil
+	}
+	return m, nil
+}
+
+func (m model) updateSetupSecret(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		if strings.TrimSpace(m.setupSecret) == "" {
+			provider := m.setupProvider
+			if provider.Name == "" {
+				provider = detectProvider(m.setupEmail)
+			}
+			return m.withStatus("paste your " + strings.ToLower(provider.secretLabel()) + " first"), nil
+		}
+		return m.startAccountConfiguration()
+	case "backspace", "ctrl+h":
+		m.setupSecret = dropLastRune(m.setupSecret)
+		provider := m.setupProvider
+		if provider.Name == "" {
+			provider = detectProvider(m.setupEmail)
+		}
+		return m.withStatus("paste your " + strings.ToLower(provider.secretLabel()) + ", then press Enter"), nil
+	case "delete":
+		return m, nil
+	case "ctrl+u":
+		m.setupSecret = ""
+		return m.withStatus("password cleared"), nil
+	}
+
+	if len(msg.Runes) > 0 {
+		for _, r := range msg.Runes {
+			if r >= 32 && r != 127 {
+				m.setupSecret += string(r)
+			}
+		}
+		provider := m.setupProvider
+		if provider.Name == "" {
+			provider = detectProvider(m.setupEmail)
+		}
+		return m.withStatus("paste your " + strings.ToLower(provider.secretLabel()) + ", then press Enter"), nil
 	}
 	return m, nil
 }
@@ -603,11 +660,22 @@ func (m model) startAccountConfiguration() (tea.Model, tea.Cmd) {
 	}
 	m.setupAccount = account
 	m.configuring = true
-	m.status = "opening Himalaya setup for " + account + "..."
-	cmd := backend.ConfigureAccountCommand(account)
-	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+	provider := m.setupProvider
+	if provider.Name == "" {
+		provider = detectProvider(m.setupEmail)
+	}
+	setup := accountSetup{
+		Account:     account,
+		Email:       m.setupEmail,
+		DisplayName: displayNameFromEmail(m.setupEmail),
+		Provider:    provider,
+		Secret:      m.setupSecret,
+	}
+	m.status = "configuring " + provider.Name + " in the background..."
+	return m, func() tea.Msg {
+		err := backend.SaveAccountSetup(setup)
 		return accountConfiguredMsg{account: account, err: err}
-	})
+	}
 }
 
 func (m model) loadInbox() tea.Cmd {
@@ -696,8 +764,8 @@ func (m model) renderSetup(height int) string {
 		lines := []string{
 			styles.panelTitle.Render("Email setup"),
 			"",
-			styles.readerBody.Width(width).Render("Himalaya's interactive wizard is open in this terminal."),
-			styles.readerBody.Width(width).Render("Finish it there; clibox will reload your inbox afterward."),
+			styles.readerBody.Width(width).Render("clibox is writing the Himalaya account config and saving the password to your OS credential store."),
+			styles.readerBody.Width(width).Render("Your inbox will reload automatically when setup finishes."),
 		}
 		return fitHeight(strings.Join(lines, "\n"), height)
 	}
@@ -705,6 +773,8 @@ func (m model) renderSetup(height int) string {
 	switch m.setupStep {
 	case setupReviewStep:
 		return m.renderSetupReview(width, height)
+	case setupSecretStep:
+		return m.renderSetupSecret(width, height)
 	case setupAccountStep:
 		return m.renderSetupAccount(width, height)
 	default:
@@ -718,7 +788,7 @@ func (m model) renderSetupEmail(width, height int) string {
 	lines := []string{
 		styles.panelTitle.Render("Add email account"),
 		"",
-		styles.readerBody.Width(width).Render("Start with your email address. clibox will detect the provider and tell you what kind of password or app password you need."),
+		styles.readerBody.Width(width).Render("Start with your email address. clibox will detect the provider, choose the mail servers, and set up Himalaya without sending you through another wizard."),
 		"",
 		styles.readerHeader.Width(width).Render("Email address"),
 		styles.selected.Width(min(width, max(30, lipgloss.Width(email)+2))).Render(" " + email),
@@ -760,7 +830,44 @@ func (m model) renderSetupReview(width, height int) string {
 	if provider.HelpURL != "" {
 		lines = append(lines, styles.readerBody.Width(width).Render("o opens "+provider.HelpLabel+" in your browser."))
 	}
-	lines = append(lines, styles.readerBody.Width(width).Render("Enter opens Himalaya's setup wizard. e edits email. n edits account name."))
+	if provider.canAutoConfigure() {
+		lines = append(lines, styles.readerBody.Width(width).Render("Enter continues to password setup. e edits email. n edits account name."))
+	} else {
+		lines = append(lines, styles.readerBody.Width(width).Render("Automatic setup for this provider needs manual server settings first. e edits email. n edits account name."))
+	}
+	return fitHeight(strings.Join(lines, "\n"), height)
+}
+
+func (m model) renderSetupSecret(width, height int) string {
+	styles := m.activeTheme().styles
+	provider := m.setupProvider
+	if provider.Name == "" {
+		provider = detectProvider(m.setupEmail)
+	}
+	mask := strings.Repeat("*", len([]rune(m.setupSecret)))
+	if mask == "" {
+		mask = "_"
+	}
+
+	lines := []string{
+		styles.panelTitle.Render("Connect " + provider.Name),
+		"",
+		styles.readerHeader.Width(width).Render("Email: " + m.setupEmail),
+		styles.readerHeader.Width(width).Render("Account name: " + m.setupAccount),
+		"",
+	}
+	lines = append(lines, styledLines(wrapText("Paste your "+provider.secretLabel()+". clibox will save it to macOS Keychain, write Himalaya's IMAP/SMTP config, and reload your inbox.", width-2), styles.readerBody, width)...)
+	if provider.HelpURL != "" {
+		lines = append(lines, "")
+		lines = append(lines, styles.readerBody.Width(width).Render("o opens "+provider.HelpLabel+" from the previous screen. Esc returns."))
+	}
+	lines = append(lines,
+		"",
+		styles.readerHeader.Width(width).Render(provider.secretLabel()),
+		styles.selected.Width(min(width, max(30, lipgloss.Width(mask)+2))).Render(" "+mask),
+		"",
+		styles.readerBody.Width(width).Render("Enter saves setup. Ctrl+U clears. Esc returns."),
+	)
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
 

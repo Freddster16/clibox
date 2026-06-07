@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -105,7 +104,7 @@ func TestThemeKeyOpensThemePicker(t *testing.T) {
 }
 
 func TestSetupRequiredErrorOpensAccountSetupView(t *testing.T) {
-	m := NewWithOptions(Options{backend: configurableBackend{}})
+	m := NewWithOptions(Options{backend: &configurableBackend{}})
 
 	next, _ := m.Update(inboxLoadedMsg{err: setupRequiredError{}})
 	updated := next.(model)
@@ -121,7 +120,7 @@ func TestSetupRequiredErrorOpensAccountSetupView(t *testing.T) {
 }
 
 func TestSetupEmailDetectsProviderAndAccountName(t *testing.T) {
-	m := NewWithOptions(Options{backend: configurableBackend{}})
+	m := NewWithOptions(Options{backend: &configurableBackend{}})
 	m.mode = setupView
 	m.setupEmail = ""
 
@@ -148,8 +147,8 @@ func TestSetupEmailDetectsProviderAndAccountName(t *testing.T) {
 	}
 }
 
-func TestAccountSetupEnterStartsConfigurator(t *testing.T) {
-	m := NewWithOptions(Options{backend: configurableBackend{}})
+func TestAccountSetupEnterMovesToSecretStep(t *testing.T) {
+	m := NewWithOptions(Options{backend: &configurableBackend{}})
 	m.mode = setupView
 	m.setupStep = setupReviewStep
 	m.setupEmail = "freddy@gmail.com"
@@ -158,16 +157,50 @@ func TestAccountSetupEnterStartsConfigurator(t *testing.T) {
 
 	next, cmd := m.Update(keyMsg("enter"))
 	updated := next.(model)
+	if updated.setupStep != setupSecretStep {
+		t.Fatalf("expected setup enter to move to secret step, got %v", updated.setupStep)
+	}
+	if cmd != nil {
+		t.Fatal("expected review enter not to launch a wizard command")
+	}
+}
+
+func TestSecretStepStartsBackgroundSetup(t *testing.T) {
+	backend := &configurableBackend{}
+	m := NewWithOptions(Options{backend: backend})
+	m.mode = setupView
+	m.setupStep = setupSecretStep
+	m.setupEmail = "freddy@gmail.com"
+	m.setupProvider = detectProvider(m.setupEmail)
+	m.setupAccount = "personal"
+
+	m = pressKey(t, m, "abcd efgh ijkl mnop")
+	next, cmd := m.Update(keyMsg("enter"))
+	updated := next.(model)
 	if !updated.configuring {
-		t.Fatal("expected setup enter to mark model as configuring")
+		t.Fatal("expected secret enter to mark model as configuring")
 	}
 	if cmd == nil {
-		t.Fatal("expected setup enter to return Himalaya configure command")
+		t.Fatal("expected secret enter to return background setup command")
+	}
+	msg := cmd()
+	configured, ok := msg.(accountConfiguredMsg)
+	if !ok {
+		t.Fatalf("expected accountConfiguredMsg, got %T", msg)
+	}
+	if configured.err != nil {
+		t.Fatalf("expected fake setup to succeed: %v", configured.err)
+	}
+	if backend.saved.Account != "personal" || backend.saved.Email != "freddy@gmail.com" {
+		t.Fatalf("unexpected saved setup: %+v", backend.saved)
+	}
+	if backend.saved.Secret != "abcd efgh ijkl mnop" {
+		t.Fatalf("expected secret to be captured, got %q", backend.saved.Secret)
 	}
 }
 
 func TestAccountSetupCanEditAccountName(t *testing.T) {
-	m := NewWithOptions(Options{backend: configurableBackend{}})
+	m := NewWithOptions(Options{backend: &configurableBackend{}})
 	m.mode = setupView
 	m.setupStep = setupReviewStep
 	m.setupAccount = "gmail"
@@ -189,7 +222,7 @@ func TestAccountSetupCanEditAccountName(t *testing.T) {
 }
 
 func TestProviderReviewCanOpenBrowserHelp(t *testing.T) {
-	m := NewWithOptions(Options{backend: configurableBackend{}})
+	m := NewWithOptions(Options{backend: &configurableBackend{}})
 	m.mode = setupView
 	m.setupStep = setupReviewStep
 	m.setupEmail = "freddy@gmail.com"
@@ -206,7 +239,7 @@ func TestProviderReviewCanOpenBrowserHelp(t *testing.T) {
 }
 
 func TestAccountConfiguredReloadsInboxWithAccount(t *testing.T) {
-	m := NewWithOptions(Options{backend: configurableBackend{}})
+	m := NewWithOptions(Options{backend: &configurableBackend{}})
 	m.mode = setupView
 	m.configuring = true
 
@@ -381,12 +414,12 @@ func TestProviderDetectionGivesFriendlyGuidance(t *testing.T) {
 		"freddy@yahoo.com":      {"Yahoo Mail", "app password"},
 		"freddy@fastmail.com":   {"Fastmail", "app password"},
 		"freddy@protonmail.com": {"Proton Mail", "Proton Mail Bridge"},
-		"freddy@example.com":    {"Custom mail", "automatic provider discovery"},
+		"freddy@example.com":    {"Custom mail", "IMAP and SMTP"},
 	}
 
 	for email, wants := range cases {
 		provider := detectProvider(email)
-		combined := provider.Name + " " + provider.AuthSummary + " " + provider.ManualWarning + " " + strings.Join(provider.Instructions, " ")
+		combined := provider.Name + " " + provider.AuthSummary + " " + provider.SecretLabel + " " + provider.ManualWarning + " " + strings.Join(provider.Instructions, " ")
 		for _, want := range wants {
 			if !strings.Contains(combined, want) {
 				t.Fatalf("expected provider guidance for %s to contain %q, got %+v", email, want, provider)
@@ -457,6 +490,7 @@ func testMessages() []message {
 
 type configurableBackend struct {
 	account string
+	saved   accountSetup
 }
 
 func (b configurableBackend) ListEnvelopes(context.Context) ([]message, error) {
@@ -467,11 +501,12 @@ func (b configurableBackend) Label() string {
 	return "fake " + b.account
 }
 
-func (b configurableBackend) ConfigureAccountCommand(string) *exec.Cmd {
-	return exec.Command("true")
+func (b *configurableBackend) SaveAccountSetup(setup accountSetup) error {
+	b.saved = setup
+	return nil
 }
 
-func (b configurableBackend) WithAccount(account string) inboxBackend {
+func (b *configurableBackend) WithAccount(account string) inboxBackend {
 	b.account = account
 	return b
 }

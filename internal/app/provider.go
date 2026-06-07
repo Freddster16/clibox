@@ -12,6 +12,7 @@ type setupStep int
 const (
 	setupEmailStep setupStep = iota
 	setupReviewStep
+	setupSecretStep
 	setupAccountStep
 )
 
@@ -23,6 +24,14 @@ type providerInfo struct {
 	ManualWarning string
 	HelpLabel     string
 	HelpURL       string
+	SecretLabel   string
+	IMAPHost      string
+	IMAPPort      int
+	IMAPSecurity  string
+	SMTPHost      string
+	SMTPPort      int
+	SMTPSecurity  string
+	Folders       map[string]string
 }
 
 func detectProvider(email string) providerInfo {
@@ -30,71 +39,109 @@ func detectProvider(email string) providerInfo {
 	switch domain {
 	case "gmail.com", "googlemail.com":
 		return providerInfo{
-			Name:        "Gmail",
-			Account:     "gmail",
-			AuthSummary: "Gmail setup opens in your browser so you can create the app password Google requires for terminal mail clients.",
-			HelpLabel:   "Open Google app passwords",
-			HelpURL:     "https://myaccount.google.com/apppasswords",
+			Name:         "Gmail",
+			Account:      "gmail",
+			AuthSummary:  "Gmail is detected. clibox can fill the Gmail IMAP/SMTP settings in the background; you only need a Google app password for terminal mail access.",
+			HelpLabel:    "Open Google app passwords",
+			HelpURL:      "https://myaccount.google.com/apppasswords",
+			SecretLabel:  "Google app password",
+			IMAPHost:     "imap.gmail.com",
+			IMAPPort:     993,
+			IMAPSecurity: "tls",
+			SMTPHost:     "smtp.gmail.com",
+			SMTPPort:     587,
+			SMTPSecurity: "start-tls",
+			Folders: map[string]string{
+				"inbox":  "INBOX",
+				"sent":   "[Gmail]/Sent Mail",
+				"drafts": "[Gmail]/Drafts",
+				"trash":  "[Gmail]/Trash",
+			},
 			Instructions: []string{
 				"Enable IMAP in Gmail settings if it is disabled.",
-				"Use your full Gmail address as the username.",
-				"Use a Google app password when Himalaya asks for a password.",
-				"Accept the discovered Gmail server settings when Himalaya suggests them.",
+				"Use the app password from Google, not your normal Google password.",
+				"clibox uses your full Gmail address as the username and writes the Gmail server settings for you.",
 			},
 		}
 	case "icloud.com", "me.com", "mac.com":
 		return providerInfo{
-			Name:        "iCloud Mail",
-			Account:     "icloud",
-			AuthSummary: "iCloud requires an app-specific password from your Apple Account.",
-			HelpLabel:   "Open Apple Account",
-			HelpURL:     "https://account.apple.com/account/manage",
+			Name:         "iCloud Mail",
+			Account:      "icloud",
+			AuthSummary:  "iCloud Mail is detected. clibox can fill the iCloud IMAP/SMTP settings in the background; you only need an Apple app-specific password.",
+			HelpLabel:    "Open Apple Account",
+			HelpURL:      "https://account.apple.com/account/manage",
+			SecretLabel:  "Apple app-specific password",
+			IMAPHost:     "imap.mail.me.com",
+			IMAPPort:     993,
+			IMAPSecurity: "tls",
+			SMTPHost:     "smtp.mail.me.com",
+			SMTPPort:     587,
+			SMTPSecurity: "start-tls",
+			Folders:      standardFolders(),
 			Instructions: []string{
-				"Use your full iCloud email address as the username.",
 				"Generate an app-specific password for Mail in your Apple Account security settings.",
-				"Paste that app-specific password when Himalaya asks for a password.",
-				"Accept the discovered iCloud server settings when Himalaya suggests them.",
+				"clibox uses your full iCloud email address as the username and writes the iCloud server settings for you.",
 			},
 		}
 	case "outlook.com", "hotmail.com", "live.com", "msn.com":
 		return providerInfo{
-			Name:        "Outlook",
-			Account:     "outlook",
-			AuthSummary: "Outlook may require an app password or IMAP access depending on your account security.",
-			HelpLabel:   "Open Microsoft security",
-			HelpURL:     "https://account.microsoft.com/security",
+			Name:         "Outlook",
+			Account:      "outlook",
+			AuthSummary:  "Outlook is detected. clibox can fill the Outlook IMAP/SMTP hosts, but Microsoft may require Modern Auth/OAuth for some accounts.",
+			HelpLabel:    "Open Microsoft security",
+			HelpURL:      "https://account.microsoft.com/security",
+			SecretLabel:  "Outlook password or app password",
+			IMAPHost:     "outlook.office365.com",
+			IMAPPort:     993,
+			IMAPSecurity: "tls",
+			SMTPHost:     "smtp-mail.outlook.com",
+			SMTPPort:     587,
+			SMTPSecurity: "start-tls",
+			Folders:      standardFolders(),
 			Instructions: []string{
-				"Use your full Outlook email address as the username.",
-				"If your normal password is rejected, create an app password or enable IMAP access in Microsoft account settings.",
-				"Accept the discovered Outlook server settings when Himalaya suggests them.",
+				"Enable IMAP access in Outlook.com settings if it is disabled.",
+				"If password login is rejected, this account may need OAuth support that is not in clibox yet.",
+				"clibox uses your full Outlook email address as the username and writes the server settings for you.",
 			},
 		}
 	case "yahoo.com", "ymail.com", "rocketmail.com":
 		return providerInfo{
-			Name:        "Yahoo Mail",
-			Account:     "yahoo",
-			AuthSummary: "Yahoo usually requires an app password for third-party mail clients.",
-			HelpLabel:   "Open Yahoo security",
-			HelpURL:     "https://login.yahoo.com/account/security",
+			Name:         "Yahoo Mail",
+			Account:      "yahoo",
+			AuthSummary:  "Yahoo Mail is detected. clibox can fill the Yahoo IMAP/SMTP settings in the background; you only need a Yahoo app password.",
+			HelpLabel:    "Open Yahoo security",
+			HelpURL:      "https://login.yahoo.com/account/security",
+			SecretLabel:  "Yahoo app password",
+			IMAPHost:     "imap.mail.yahoo.com",
+			IMAPPort:     993,
+			IMAPSecurity: "tls",
+			SMTPHost:     "smtp.mail.yahoo.com",
+			SMTPPort:     587,
+			SMTPSecurity: "start-tls",
+			Folders:      standardFolders(),
 			Instructions: []string{
-				"Use your full Yahoo email address as the username.",
 				"Create an app password in Yahoo account security settings.",
-				"Paste the app password when Himalaya asks for a password.",
-				"Accept the discovered Yahoo server settings when Himalaya suggests them.",
+				"clibox uses your full Yahoo email address as the username and writes the Yahoo server settings for you.",
 			},
 		}
 	case "fastmail.com":
 		return providerInfo{
-			Name:        "Fastmail",
-			Account:     "fastmail",
-			AuthSummary: "Fastmail works best with an app password for mail clients.",
-			HelpLabel:   "Open Fastmail app passwords",
-			HelpURL:     "https://app.fastmail.com/settings/security/integrations",
+			Name:         "Fastmail",
+			Account:      "fastmail",
+			AuthSummary:  "Fastmail is detected. clibox can fill the Fastmail IMAP/SMTP settings in the background; you only need a Fastmail app password.",
+			HelpLabel:    "Open Fastmail app passwords",
+			HelpURL:      "https://app.fastmail.com/settings/security/integrations",
+			SecretLabel:  "Fastmail app password",
+			IMAPHost:     "imap.fastmail.com",
+			IMAPPort:     993,
+			IMAPSecurity: "tls",
+			SMTPHost:     "smtp.fastmail.com",
+			SMTPPort:     587,
+			SMTPSecurity: "start-tls",
+			Folders:      standardFolders(),
 			Instructions: []string{
-				"Use your full Fastmail address as the username.",
 				"Create an app password in Fastmail settings.",
-				"Paste the app password when Himalaya asks for a password.",
-				"Accept the discovered Fastmail server settings when Himalaya suggests them.",
+				"clibox uses your full Fastmail address as the username and writes the Fastmail server settings for you.",
 			},
 		}
 	case "proton.me", "protonmail.com":
@@ -116,13 +163,30 @@ func detectProvider(email string) providerInfo {
 		return providerInfo{
 			Name:        "Custom mail",
 			Account:     account,
-			AuthSummary: "clibox will let Himalaya try automatic provider discovery.",
+			AuthSummary: "clibox does not know this provider's IMAP/SMTP settings yet, so automatic background setup is limited.",
 			Instructions: []string{
 				"Use your full email address as the username unless your provider says otherwise.",
-				"If discovery fails, your provider may list IMAP and SMTP settings in its help docs.",
+				"Your provider should list IMAP and SMTP settings in its help docs.",
 				"You may need an app password if two-factor authentication is enabled.",
 			},
 		}
+	}
+}
+
+func (p providerInfo) canAutoConfigure() bool {
+	return strings.TrimSpace(p.IMAPHost) != "" && p.IMAPPort > 0 && strings.TrimSpace(p.SMTPHost) != "" && p.SMTPPort > 0
+}
+
+func (p providerInfo) secretLabel() string {
+	return firstNonEmpty(p.SecretLabel, "Email password or app password")
+}
+
+func standardFolders() map[string]string {
+	return map[string]string{
+		"inbox":  "INBOX",
+		"sent":   "Sent",
+		"drafts": "Drafts",
+		"trash":  "Trash",
 	}
 }
 

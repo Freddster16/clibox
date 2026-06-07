@@ -118,7 +118,7 @@ echo "Run it with:"
 echo "  ${bin_name}"
 echo "Check your email setup with:"
 echo "  ${bin_name} doctor"
-echo "If Himalaya needs an account, ${bin_name} will ask for the account name inside the TUI."
+echo "If Himalaya needs an account, ${bin_name} will ask for your email once and configure common providers in the TUI."
 echo
 echo "If your shell cannot find it, add this to PATH:"
 echo "  export PATH=\"${gobin}:\$PATH\""

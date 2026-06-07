@@ -22,7 +22,7 @@ type inboxBackend interface {
 }
 
 type accountSetupBackend interface {
-	ConfigureAccountCommand(account string) *exec.Cmd
+	SaveAccountSetup(accountSetup) error
 	WithAccount(account string) inboxBackend
 }
 
@@ -76,10 +76,6 @@ func newHimalayaBackend(options Options) himalayaBackend {
 
 func (h himalayaBackend) Label() string {
 	return strings.Join(nonEmpty("Himalaya", h.account, h.mailbox), " ")
-}
-
-func (h himalayaBackend) ConfigureAccountCommand(account string) *exec.Cmd {
-	return exec.Command(h.binary, "account", "configure", strings.TrimSpace(account))
 }
 
 func (h himalayaBackend) WithAccount(account string) inboxBackend {
@@ -352,7 +348,7 @@ type setupRequiredError struct {
 }
 
 func (e setupRequiredError) Error() string {
-	return "Himalaya is installed but not configured yet. Type your email address in clibox, review the provider guidance, then press Enter to open Himalaya's setup wizard"
+	return "Himalaya is installed but not configured yet. Type your email address once in clibox so it can detect the provider and configure the account in the background"
 }
 
 func isSetupRequiredError(err error) bool {
