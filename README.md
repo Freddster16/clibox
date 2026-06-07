@@ -8,7 +8,29 @@ at home next to Neovim, Codex, OpenCode, Hermes, tmux, and a shell: open the
 inbox, move with `j/k`, read with `Enter`, reply in `$EDITOR`, archive with
 `a`, search with `/`, and quit with `q`.
 
-Status: product spec and roadmap. The app is not implemented yet.
+Status: Phase 1 is implemented. `clibox` currently opens a fake inbox TUI so
+the keyboard flow and layout can be tested before real email is connected.
+
+## Install
+
+Install the latest version from GitHub:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Freddster16/clibox/main/install.sh | sh
+```
+
+The installer requires Go 1.24 or newer and installs `clibox` with `go install`.
+If your shell cannot find `clibox` after installation, add Go's bin directory to
+your `PATH`; the installer prints the exact path.
+
+For local development:
+
+```sh
+go run .
+```
+
+Phase 1 does not require an email account. It uses fake messages so the TUI can
+be tested immediately.
 
 ## Target experience
 
@@ -45,7 +67,7 @@ The first run should be boring in the best way:
 4. Press `Enter` to read, `b` to go back, `r` to reply, `a` to archive, `/` to
    search, and `q` to leave.
 
-## Planned quick start
+## Planned real-email quick start
 
 `clibox` should rely on [Himalaya](https://github.com/pimalaya/himalaya) for
 email protocols at first. Himalaya already handles the hard parts: accounts,
@@ -132,6 +154,8 @@ app should ask for operations like `ListEnvelopes`, `ReadMessage`, `Reply`,
 ## MVP roadmap
 
 ### Phase 1: Fake inbox
+
+Done in the first implementation pass.
 
 Build the TUI without touching real email:
 
