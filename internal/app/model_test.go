@@ -115,27 +115,45 @@ func TestSetupRequiredErrorOpensAccountSetupView(t *testing.T) {
 	if updated.setupAccount != "personal" {
 		t.Fatalf("expected default setup account personal, got %q", updated.setupAccount)
 	}
+	if updated.setupStep != setupEmailStep {
+		t.Fatalf("expected setup to start with email step, got %v", updated.setupStep)
+	}
 }
 
-func TestAccountSetupInputEditsAccountName(t *testing.T) {
+func TestSetupEmailDetectsProviderAndAccountName(t *testing.T) {
 	m := NewWithOptions(Options{backend: configurableBackend{}})
 	m.mode = setupView
-	m.setupAccount = ""
+	m.setupEmail = ""
 
-	m = pressKey(t, m, "work")
-	if m.setupAccount != "work" {
-		t.Fatalf("expected account input to append runes, got %q", m.setupAccount)
+	m = pressKey(t, m, "freddy@gmail.com")
+	if m.setupEmail != "freddy@gmail.com" {
+		t.Fatalf("expected email input to append runes, got %q", m.setupEmail)
 	}
 
 	m = pressKey(t, m, "backspace")
-	if m.setupAccount != "wor" {
-		t.Fatalf("expected backspace to drop last rune, got %q", m.setupAccount)
+	if m.setupEmail != "freddy@gmail.co" {
+		t.Fatalf("expected backspace to drop last email rune, got %q", m.setupEmail)
+	}
+
+	m = pressKey(t, m, "m")
+	m = pressKey(t, m, "enter")
+	if m.setupStep != setupReviewStep {
+		t.Fatalf("expected valid email to advance to review, got %v", m.setupStep)
+	}
+	if m.setupProvider.Name != "Gmail" {
+		t.Fatalf("expected Gmail provider, got %q", m.setupProvider.Name)
+	}
+	if m.setupAccount != "gmail" {
+		t.Fatalf("expected Gmail account name, got %q", m.setupAccount)
 	}
 }
 
 func TestAccountSetupEnterStartsConfigurator(t *testing.T) {
 	m := NewWithOptions(Options{backend: configurableBackend{}})
 	m.mode = setupView
+	m.setupStep = setupReviewStep
+	m.setupEmail = "freddy@gmail.com"
+	m.setupProvider = detectProvider(m.setupEmail)
 	m.setupAccount = "personal"
 
 	next, cmd := m.Update(keyMsg("enter"))
@@ -145,6 +163,28 @@ func TestAccountSetupEnterStartsConfigurator(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("expected setup enter to return Himalaya configure command")
+	}
+}
+
+func TestAccountSetupCanEditAccountName(t *testing.T) {
+	m := NewWithOptions(Options{backend: configurableBackend{}})
+	m.mode = setupView
+	m.setupStep = setupReviewStep
+	m.setupAccount = "gmail"
+
+	m = pressKey(t, m, "n")
+	if m.setupStep != setupAccountStep {
+		t.Fatalf("expected n to switch to account edit step, got %v", m.setupStep)
+	}
+
+	m.setupAccount = ""
+	m = pressKey(t, m, "work")
+	m = pressKey(t, m, "enter")
+	if m.setupStep != setupReviewStep {
+		t.Fatalf("expected edited account to return to review, got %v", m.setupStep)
+	}
+	if m.setupAccount != "work" {
+		t.Fatalf("expected edited account name work, got %q", m.setupAccount)
 	}
 }
 
@@ -316,6 +356,41 @@ func TestThemesHaveDistinctVisibleSurfaces(t *testing.T) {
 	}
 }
 
+func TestProviderDetectionGivesFriendlyGuidance(t *testing.T) {
+	cases := map[string][]string{
+		"freddy@gmail.com":      {"Gmail", "app password"},
+		"freddy@icloud.com":     {"iCloud Mail", "app-specific password"},
+		"freddy@outlook.com":    {"Outlook", "app password"},
+		"freddy@yahoo.com":      {"Yahoo Mail", "app password"},
+		"freddy@fastmail.com":   {"Fastmail", "app password"},
+		"freddy@protonmail.com": {"Proton Mail", "Proton Mail Bridge"},
+		"freddy@example.com":    {"Custom mail", "automatic provider discovery"},
+	}
+
+	for email, wants := range cases {
+		provider := detectProvider(email)
+		combined := provider.Name + " " + provider.AuthSummary + " " + provider.ManualWarning + " " + strings.Join(provider.Instructions, " ")
+		for _, want := range wants {
+			if !strings.Contains(combined, want) {
+				t.Fatalf("expected provider guidance for %s to contain %q, got %+v", email, want, provider)
+			}
+		}
+	}
+}
+
+func TestValidEmailAddress(t *testing.T) {
+	for _, email := range []string{"freddy@gmail.com", "work@example.co"} {
+		if !validEmailAddress(email) {
+			t.Fatalf("expected %q to be valid", email)
+		}
+	}
+	for _, email := range []string{"", "freddy", "@example.com", "freddy@example", "fre ddy@example.com"} {
+		if validEmailAddress(email) {
+			t.Fatalf("expected %q to be invalid", email)
+		}
+	}
+}
+
 func pressKey(t *testing.T, m model, key string) model {
 	t.Helper()
 
@@ -387,6 +462,10 @@ func keyMsg(key string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "backspace":
+		return tea.KeyMsg{Type: tea.KeyBackspace}
+	case "delete":
+		return tea.KeyMsg{Type: tea.KeyDelete}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	}

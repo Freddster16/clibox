@@ -174,7 +174,7 @@ func TestHimalayaBackendExplainsSetupPromptFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected setup prompt failure")
 	}
-	for _, want := range []string{"not configured", "Type an account name", "Himalaya's setup wizard"} {
+	for _, want := range []string{"not configured", "email address", "provider guidance", "Himalaya's setup wizard"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected setup guidance to contain %q, got %q", want, err)
 		}

@@ -352,7 +352,7 @@ type setupRequiredError struct {
 }
 
 func (e setupRequiredError) Error() string {
-	return "Himalaya is installed but not configured yet. Type an account name in clibox, press Enter, and finish Himalaya's setup wizard"
+	return "Himalaya is installed but not configured yet. Type your email address in clibox, review the provider guidance, then press Enter to open Himalaya's setup wizard"
 }
 
 func isSetupRequiredError(err error) bool {

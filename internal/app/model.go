@@ -48,7 +48,10 @@ type model struct {
 	status            string
 	account           string
 	mailbox           string
+	setupEmail        string
 	setupAccount      string
+	setupProvider     providerInfo
+	setupStep         setupStep
 	configuring       bool
 	theme             int
 	themeCursor       int
@@ -264,6 +267,7 @@ func NewWithOptions(options Options) model {
 		account:           strings.TrimSpace(options.Account),
 		mailbox:           strings.TrimSpace(options.Mailbox),
 		setupAccount:      firstNonEmpty(options.Account, "personal"),
+		setupStep:         setupEmailStep,
 		theme:             index,
 		themeCursor:       index,
 		themeBeforePicker: index,
@@ -300,6 +304,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = setupView
 				m.messages = nil
 				m.cursor = 0
+				m.setupStep = setupEmailStep
 				if strings.TrimSpace(m.setupAccount) == "" {
 					m.setupAccount = firstNonEmpty(m.account, "personal")
 				}
@@ -437,8 +442,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadInbox()
 		case "A":
 			m.mode = setupView
+			m.setupStep = setupEmailStep
 			m.setupAccount = firstNonEmpty(m.account, m.setupAccount, "personal")
-			m.status = "type a Himalaya account name, then press Enter"
+			m.status = "type your email address, then press Enter"
 		case "t":
 			m.showThemes = true
 			m.themeCursor = m.theme
@@ -463,29 +469,92 @@ func (m model) updateSetup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc", "q":
+		if m.setupStep == setupReviewStep {
+			m.setupStep = setupEmailStep
+			return m.withStatus("edit your email address, then press Enter"), nil
+		}
+		if m.setupStep == setupAccountStep {
+			m.setupStep = setupReviewStep
+			return m.withStatus("review setup, then press Enter"), nil
+		}
 		if len(m.messages) == 0 {
 			return m, tea.Quit
 		}
 		m.mode = inboxView
 		return m.withStatus("account setup canceled"), nil
+	}
+
+	switch m.setupStep {
+	case setupEmailStep:
+		return m.updateSetupEmail(msg)
+	case setupAccountStep:
+		return m.updateSetupAccount(msg)
+	default:
+		return m.updateSetupReview(msg)
+	}
+}
+
+func (m model) updateSetupEmail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
 	case "enter":
-		account := strings.TrimSpace(m.setupAccount)
+		email := strings.TrimSpace(m.setupEmail)
+		if !validEmailAddress(email) {
+			return m.withStatus("type a valid email address first"), nil
+		}
+		m.setupEmail = email
+		m.setupProvider = detectProvider(email)
+		if strings.TrimSpace(m.account) != "" {
+			m.setupAccount = sanitizeAccountName(m.account, m.setupProvider.Account)
+		} else {
+			m.setupAccount = firstNonEmpty(m.setupProvider.Account, accountNameFromDomain(emailDomain(email)), "personal")
+		}
+		m.setupStep = setupReviewStep
+		return m.withStatus(m.setupProvider.Name + " detected; review setup, then press Enter"), nil
+	case "backspace", "ctrl+h":
+		m.setupEmail = dropLastRune(m.setupEmail)
+		return m.withStatus("type your email address, then press Enter"), nil
+	case "delete":
+		return m, nil
+	}
+
+	if len(msg.Runes) > 0 {
+		for _, r := range msg.Runes {
+			if isEmailRune(r) {
+				m.setupEmail += string(r)
+			}
+		}
+		return m.withStatus("type your email address, then press Enter"), nil
+	}
+	return m, nil
+}
+
+func (m model) updateSetupReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		return m.startAccountConfiguration()
+	case "e":
+		m.setupStep = setupEmailStep
+		return m.withStatus("edit your email address, then press Enter"), nil
+	case "n":
+		m.setupStep = setupAccountStep
+		return m.withStatus("edit the local account name, then press Enter"), nil
+	}
+	return m, nil
+}
+
+func (m model) updateSetupAccount(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		account := sanitizeAccountName(m.setupAccount, "")
 		if account == "" {
 			return m.withStatus("type an account name first"), nil
 		}
-		backend, ok := m.backend.(accountSetupBackend)
-		if !ok {
-			return m.withStatus("this backend cannot configure accounts"), nil
-		}
-		m.configuring = true
-		m.status = "opening Himalaya setup for " + account + "..."
-		cmd := backend.ConfigureAccountCommand(account)
-		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-			return accountConfiguredMsg{account: account, err: err}
-		})
+		m.setupAccount = account
+		m.setupStep = setupReviewStep
+		return m.withStatus("review setup, then press Enter"), nil
 	case "backspace", "ctrl+h":
 		m.setupAccount = dropLastRune(m.setupAccount)
-		return m.withStatus("type a Himalaya account name, then press Enter"), nil
+		return m.withStatus("edit the local account name, then press Enter"), nil
 	case "delete":
 		return m, nil
 	}
@@ -496,10 +565,27 @@ func (m model) updateSetup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setupAccount += string(r)
 			}
 		}
-		return m.withStatus("type a Himalaya account name, then press Enter"), nil
+		return m.withStatus("edit the local account name, then press Enter"), nil
 	}
-
 	return m, nil
+}
+
+func (m model) startAccountConfiguration() (tea.Model, tea.Cmd) {
+	account := sanitizeAccountName(m.setupAccount, "")
+	if account == "" {
+		return m.withStatus("type an account name first"), nil
+	}
+	backend, ok := m.backend.(accountSetupBackend)
+	if !ok {
+		return m.withStatus("this backend cannot configure accounts"), nil
+	}
+	m.setupAccount = account
+	m.configuring = true
+	m.status = "opening Himalaya setup for " + account + "..."
+	cmd := backend.ConfigureAccountCommand(account)
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return accountConfiguredMsg{account: account, err: err}
+	})
 }
 
 func (m model) loadInbox() tea.Cmd {
@@ -584,34 +670,89 @@ func (m model) renderInbox(height int) string {
 func (m model) renderSetup(height int) string {
 	styles := m.activeTheme().styles
 	width := max(32, m.width)
-	account := m.setupAccount
-	cursor := ""
-	if !m.configuring {
-		cursor = "_"
+	if m.configuring {
+		lines := []string{
+			styles.panelTitle.Render("Email setup"),
+			"",
+			styles.readerBody.Width(width).Render("Himalaya's interactive wizard is open in this terminal."),
+			styles.readerBody.Width(width).Render("Finish it there; clibox will reload your inbox afterward."),
+		}
+		return fitHeight(strings.Join(lines, "\n"), height)
+	}
+
+	switch m.setupStep {
+	case setupReviewStep:
+		return m.renderSetupReview(width, height)
+	case setupAccountStep:
+		return m.renderSetupAccount(width, height)
+	default:
+		return m.renderSetupEmail(width, height)
+	}
+}
+
+func (m model) renderSetupEmail(width, height int) string {
+	styles := m.activeTheme().styles
+	email := m.setupEmail + "_"
+	lines := []string{
+		styles.panelTitle.Render("Add email account"),
+		"",
+		styles.readerBody.Width(width).Render("Start with your email address. clibox will detect the provider and tell you what kind of password or app password you need."),
+		"",
+		styles.readerHeader.Width(width).Render("Email address"),
+		styles.selected.Width(min(width, max(30, lipgloss.Width(email)+2))).Render(" " + email),
+		"",
+		styles.readerBody.Width(width).Render("Examples: freddy@gmail.com, you@icloud.com, work@company.com"),
+		"",
+		styles.readerBody.Width(width).Render("Enter continues. q quits."),
+	}
+	return fitHeight(strings.Join(lines, "\n"), height)
+}
+
+func (m model) renderSetupReview(width, height int) string {
+	styles := m.activeTheme().styles
+	provider := m.setupProvider
+	if provider.Name == "" {
+		provider = detectProvider(m.setupEmail)
 	}
 
 	lines := []string{
-		styles.panelTitle.Render("Email setup"),
+		styles.panelTitle.Render("Review account setup"),
 		"",
-		styles.readerBody.Width(width).Render("Himalaya needs an account before clibox can read your inbox."),
-		styles.readerBody.Width(width).Render("Choose a short local name for this email account, then press Enter."),
-		"",
-		styles.readerHeader.Width(width).Render("Account name"),
-		styles.selected.Width(min(width, max(20, lipgloss.Width(account)+2))).Render(" " + account + cursor),
-		"",
-		styles.readerBody.Width(width).Render("Example: personal, work, gmail"),
+		styles.readerHeader.Width(width).Render("Email: " + m.setupEmail),
+		styles.readerHeader.Width(width).Render("Provider: " + provider.Name),
+		styles.readerHeader.Width(width).Render("Account name: " + m.setupAccount),
 		"",
 	}
-	if m.configuring {
-		lines = append(lines,
-			styles.readerBody.Width(width).Render("Himalaya's interactive wizard is open in this terminal."),
-			styles.readerBody.Width(width).Render("Finish it there; clibox will reload your inbox afterward."),
-		)
-	} else {
-		lines = append(lines,
-			styles.readerBody.Width(width).Render("Enter opens Himalaya's setup wizard for that account."),
-			styles.readerBody.Width(width).Render("Esc or q cancels setup."),
-		)
+	lines = append(lines, styledLines(wrapText(provider.AuthSummary, width-2), styles.readerBody, width)...)
+	if provider.ManualWarning != "" {
+		lines = append(lines, "")
+		lines = append(lines, styledLines(wrapText(provider.ManualWarning, width-2), styles.unread, width)...)
+	}
+	lines = append(lines, "")
+	for _, instruction := range provider.Instructions {
+		lines = append(lines, styledLines(wrapText("- "+instruction, width-2), styles.readerBody, width)...)
+	}
+	lines = append(lines,
+		"",
+		styles.readerBody.Width(width).Render("Enter opens Himalaya's setup wizard. e edits email. n edits account name."),
+	)
+	return fitHeight(strings.Join(lines, "\n"), height)
+}
+
+func (m model) renderSetupAccount(width, height int) string {
+	styles := m.activeTheme().styles
+	account := m.setupAccount + "_"
+	lines := []string{
+		styles.panelTitle.Render("Account name"),
+		"",
+		styles.readerBody.Width(width).Render("This is a short local name for the account inside Himalaya and clibox."),
+		"",
+		styles.readerHeader.Width(width).Render("Account name"),
+		styles.selected.Width(min(width, max(24, lipgloss.Width(account)+2))).Render(" " + account),
+		"",
+		styles.readerBody.Width(width).Render("Examples: personal, work, gmail"),
+		"",
+		styles.readerBody.Width(width).Render("Enter returns to review. Esc returns without changing screens."),
 	}
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
@@ -762,12 +903,26 @@ func (m model) renderFooter() string {
 	if m.mode == readerView {
 		hints = themeHint + "  |  b back  r reply  a archive  d delete  ? help  q back"
 	} else if m.mode == setupView {
-		hints = "type account name  enter setup  backspace edit  q quit"
+		hints = m.setupFooterHints()
 	}
 	if m.status != "" {
 		hints = m.status + "  |  " + hints
 	}
 	return styles.footer.Width(m.width).Render(truncate(hints, max(1, m.width-2)))
+}
+
+func (m model) setupFooterHints() string {
+	if m.configuring {
+		return "finish Himalaya setup in this terminal"
+	}
+	switch m.setupStep {
+	case setupReviewStep:
+		return "enter setup  e edit email  n edit account name  q back"
+	case setupAccountStep:
+		return "type account name  enter review  backspace edit  q back"
+	default:
+		return "type email address  enter continue  backspace edit  q quit"
+	}
 }
 
 func (m model) overlayHelp(content string) string {

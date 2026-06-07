@@ -16,7 +16,8 @@ envelope-level content only until Phase 3 wires full message bodies.
 
 - Starts a Bubble Tea inbox TUI with keyboard navigation and theme selection.
 - Loads real envelope lists through Himalaya instead of shipping fake messages.
-- Prompts for the Himalaya account name inside the TUI when setup is needed.
+- Starts setup with an email address, detects common providers, and explains
+  app-password or bridge requirements before opening Himalaya's wizard.
 - Supports `--account`, `--mailbox`, `--himalaya`, and `--page-size`.
 - Refreshes the envelope list with `R`.
 - Provides `clibox doctor` for setup checks before opening the TUI.
@@ -50,9 +51,10 @@ go run .
 
 Phase 2 requires Himalaya for real inbox data. If Himalaya is missing or not yet
 configured, `clibox` shows a setup error in the footer instead of crashing.
-If Himalaya needs an account, `clibox` asks for the account name inside the TUI.
-Press `Enter` and it temporarily opens Himalaya's interactive setup wizard in
-the same terminal. When the wizard exits, `clibox` reloads your inbox.
+If Himalaya needs an account, `clibox` asks for your email address inside the
+TUI, detects the provider, explains what password/app password/bridge detail is
+needed, then temporarily opens Himalaya's interactive setup wizard in the same
+terminal. When the wizard exits, `clibox` reloads your inbox.
 
 If you already installed `clibox` and want the latest UI changes:
 
@@ -90,7 +92,7 @@ screens: mailbox/list, reader, compose/review.
 The first run should be boring in the best way:
 
 1. Run `clibox`.
-2. If setup is needed, type an account name in the TUI and press `Enter`.
+2. If setup is needed, type your email address in the TUI and press `Enter`.
 3. Land in the inbox.
 4. Press `Enter` to read, `b` to go back, `r` to reply, `a` to archive, `/` to
    search, `t` to open the theme picker, and `q` to leave.
@@ -120,14 +122,18 @@ Flow:
 # 1. Start the TUI.
 clibox
 
-# 2. If clibox asks for an account, type a name like "personal" and press Enter.
+# 2. If clibox asks for setup, type your email address and press Enter.
+# clibox detects providers like Gmail, iCloud, Outlook, Yahoo, Fastmail,
+# and Proton Mail, then explains the exact auth detail to prepare.
+
+# 3. Press Enter on the review screen.
 # Himalaya's setup wizard opens in the same terminal.
 
-# 3. Optionally choose account or mailbox at launch after setup exists.
+# 4. Optionally choose account or mailbox at launch after setup exists.
 clibox --account personal
 clibox --mailbox INBOX
 
-# 4. Check local setup without opening the TUI.
+# 5. Check local setup without opening the TUI.
 clibox doctor --account personal
 ```
 
@@ -137,6 +143,18 @@ Manual Himalaya setup is still available:
 himalaya account configure personal
 himalaya envelope list --output json --page-size 5 --account personal --folder INBOX
 ```
+
+Provider guidance currently covers:
+
+- Gmail and Google Mail: app password and full email username.
+- iCloud Mail: Apple app-specific password.
+- Outlook, Hotmail, Live, and MSN: app password or enabled IMAP access when
+  required.
+- Yahoo Mail: Yahoo app password.
+- Fastmail: Fastmail app password.
+- Proton Mail: Proton Mail Bridge warning before manual Bridge settings.
+- Custom domains: automatic discovery first, then manual IMAP/SMTP only if the
+  provider requires it.
 
 Useful launch flags:
 
