@@ -30,9 +30,15 @@ Install the latest version from GitHub:
 curl -fsSL https://raw.githubusercontent.com/Freddster16/clibox/main/install.sh | sh
 ```
 
-The installer requires Go 1.24 or newer and installs `clibox` with `go install`.
-If your shell cannot find `clibox` after installation, add Go's bin directory to
-your `PATH`; the installer prints the exact path.
+The installer checks for Homebrew, Himalaya, and Go before installing `clibox`.
+If Homebrew is missing on macOS or Linux, it installs Homebrew using the official
+Homebrew installer. It then installs Himalaya with `brew install himalaya`, and
+installs Go with Homebrew if Go 1.24 or newer is not available. Homebrew may ask
+for your password while setting up system directories.
+
+`clibox` itself is installed with `go install`. If your shell cannot find
+`clibox` after installation, add Go's bin directory to your `PATH`; the
+installer prints the exact path.
 
 For local development:
 
