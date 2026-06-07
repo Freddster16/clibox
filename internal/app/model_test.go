@@ -272,6 +272,25 @@ func TestProviderReviewCanOpenBrowserHelp(t *testing.T) {
 	}
 }
 
+func TestSetupScreensShowProviderURL(t *testing.T) {
+	m := NewWithOptions(Options{backend: &configurableBackend{}})
+	m.mode = setupView
+	m.setupEmail = "freddy@gmail.com"
+	m.setupProvider = detectProvider(m.setupEmail)
+	m.setupAccount = "gmail"
+
+	review := m.renderSetupReview(100, 30)
+	secret := m.renderSetupSecret(100, 30)
+	for name, view := range map[string]string{"review": review, "secret": secret} {
+		if !strings.Contains(view, "https://myaccount.google.com/apppasswords") {
+			t.Fatalf("expected %s view to show clickable provider URL, got:\n%s", name, view)
+		}
+	}
+	if strings.Contains(secret, "previous screen") {
+		t.Fatalf("expected secret view to offer a direct link, got:\n%s", secret)
+	}
+}
+
 func TestAccountConfiguredReloadsInboxWithAccount(t *testing.T) {
 	m := NewWithOptions(Options{backend: &configurableBackend{}})
 	m.mode = setupView

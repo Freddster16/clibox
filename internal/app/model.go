@@ -857,7 +857,11 @@ func (m model) renderSetupReview(width, height int) string {
 		"",
 	)
 	if provider.HelpURL != "" {
-		lines = append(lines, styles.readerBody.Width(width).Render("o opens "+provider.HelpLabel+" in your browser."))
+		lines = append(lines,
+			styles.readerHeader.Width(width).Render(provider.HelpLabel),
+			styles.readerBody.Width(width).Render(provider.HelpURL),
+			styles.readerBody.Width(width).Render("Click the link if your terminal supports it, or press o to open it."),
+		)
 	}
 	if provider.canAutoConfigure() {
 		lines = append(lines, styles.readerBody.Width(width).Render("Enter continues to password setup. e edits email. n edits account name."))
@@ -892,7 +896,11 @@ func (m model) renderSetupSecret(width, height int) string {
 	lines = append(lines, styledLines(wrapText(prompt, width-2), styles.readerBody, width)...)
 	if provider.HelpURL != "" {
 		lines = append(lines, "")
-		lines = append(lines, styles.readerBody.Width(width).Render("Ctrl+O opens "+provider.HelpLabel+" in your browser. Esc returns."))
+		lines = append(lines,
+			styles.readerHeader.Width(width).Render(provider.HelpLabel),
+			styles.readerBody.Width(width).Render(provider.HelpURL),
+			styles.readerBody.Width(width).Render("Click the link if your terminal supports it, or press Ctrl+O to open it. Esc returns."),
+		)
 	}
 	lines = append(lines,
 		"",
