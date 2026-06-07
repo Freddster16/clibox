@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -99,6 +101,71 @@ func TestThemeKeyOpensThemePicker(t *testing.T) {
 	}
 	if m.themeCursor != m.theme {
 		t.Fatalf("expected theme cursor to start on active theme, got cursor %d and theme %d", m.themeCursor, m.theme)
+	}
+}
+
+func TestSetupRequiredErrorOpensAccountSetupView(t *testing.T) {
+	m := NewWithOptions(Options{backend: configurableBackend{}})
+
+	next, _ := m.Update(inboxLoadedMsg{err: setupRequiredError{}})
+	updated := next.(model)
+	if updated.mode != setupView {
+		t.Fatalf("expected setup view, got %v", updated.mode)
+	}
+	if updated.setupAccount != "personal" {
+		t.Fatalf("expected default setup account personal, got %q", updated.setupAccount)
+	}
+}
+
+func TestAccountSetupInputEditsAccountName(t *testing.T) {
+	m := NewWithOptions(Options{backend: configurableBackend{}})
+	m.mode = setupView
+	m.setupAccount = ""
+
+	m = pressKey(t, m, "work")
+	if m.setupAccount != "work" {
+		t.Fatalf("expected account input to append runes, got %q", m.setupAccount)
+	}
+
+	m = pressKey(t, m, "backspace")
+	if m.setupAccount != "wor" {
+		t.Fatalf("expected backspace to drop last rune, got %q", m.setupAccount)
+	}
+}
+
+func TestAccountSetupEnterStartsConfigurator(t *testing.T) {
+	m := NewWithOptions(Options{backend: configurableBackend{}})
+	m.mode = setupView
+	m.setupAccount = "personal"
+
+	next, cmd := m.Update(keyMsg("enter"))
+	updated := next.(model)
+	if !updated.configuring {
+		t.Fatal("expected setup enter to mark model as configuring")
+	}
+	if cmd == nil {
+		t.Fatal("expected setup enter to return Himalaya configure command")
+	}
+}
+
+func TestAccountConfiguredReloadsInboxWithAccount(t *testing.T) {
+	m := NewWithOptions(Options{backend: configurableBackend{}})
+	m.mode = setupView
+	m.configuring = true
+
+	next, cmd := m.Update(accountConfiguredMsg{account: "work"})
+	updated := next.(model)
+	if updated.mode != inboxView {
+		t.Fatalf("expected inbox view after setup, got %v", updated.mode)
+	}
+	if updated.account != "work" {
+		t.Fatalf("expected account to be updated, got %q", updated.account)
+	}
+	if !updated.loading {
+		t.Fatal("expected inbox to reload after setup")
+	}
+	if cmd == nil {
+		t.Fatal("expected setup completion to return reload command")
 	}
 }
 
@@ -291,6 +358,27 @@ func testMessages() []message {
 			Unread:  true,
 		},
 	}
+}
+
+type configurableBackend struct {
+	account string
+}
+
+func (b configurableBackend) ListEnvelopes(context.Context) ([]message, error) {
+	return testMessages(), nil
+}
+
+func (b configurableBackend) Label() string {
+	return "fake " + b.account
+}
+
+func (b configurableBackend) ConfigureAccountCommand(string) *exec.Cmd {
+	return exec.Command("true")
+}
+
+func (b configurableBackend) WithAccount(account string) inboxBackend {
+	b.account = account
+	return b
 }
 
 func keyMsg(key string) tea.KeyMsg {

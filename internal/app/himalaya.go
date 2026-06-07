@@ -21,6 +21,11 @@ type inboxBackend interface {
 	Label() string
 }
 
+type accountSetupBackend interface {
+	ConfigureAccountCommand(account string) *exec.Cmd
+	WithAccount(account string) inboxBackend
+}
+
 type himalayaBackend struct {
 	binary   string
 	account  string
@@ -71,6 +76,15 @@ func newHimalayaBackend(options Options) himalayaBackend {
 
 func (h himalayaBackend) Label() string {
 	return strings.Join(nonEmpty("Himalaya", h.account, h.mailbox), " ")
+}
+
+func (h himalayaBackend) ConfigureAccountCommand(account string) *exec.Cmd {
+	return exec.Command(h.binary, "account", "configure", strings.TrimSpace(account))
+}
+
+func (h himalayaBackend) WithAccount(account string) inboxBackend {
+	h.account = strings.TrimSpace(account)
+	return h
 }
 
 func (h himalayaBackend) ListEnvelopes(ctx context.Context) ([]message, error) {
@@ -328,9 +342,22 @@ func describeHimalayaFailure(failure commandFailure) error {
 	}
 	output := firstNonEmpty(failure.output(), failure.err.Error())
 	if looksLikeSetupPromptError(output) {
-		return errors.New("Himalaya is installed but not configured yet. Run `himalaya account configure personal` in your terminal, finish the interactive email setup, then run `clibox doctor --account personal`")
+		return setupRequiredError{detail: oneLine(output)}
 	}
 	return fmt.Errorf("%s failed: %s", shellCommand(failure.program, failure.args), oneLine(output))
+}
+
+type setupRequiredError struct {
+	detail string
+}
+
+func (e setupRequiredError) Error() string {
+	return "Himalaya is installed but not configured yet. Type an account name in clibox, press Enter, and finish Himalaya's setup wizard"
+}
+
+func isSetupRequiredError(err error) bool {
+	var setupErr setupRequiredError
+	return errors.As(err, &setupErr)
 }
 
 func (f commandFailure) output() string {

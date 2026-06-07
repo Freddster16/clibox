@@ -103,8 +103,8 @@ install_himalaya() {
 install_himalaya
 install_go
 
-echo "Installing ${bin_name} from ${repo}..."
-go install "${repo}@latest"
+echo "Installing ${bin_name} from ${repo} main..."
+GOPROXY=direct go install "${repo}@main"
 
 gobin="$(go env GOBIN)"
 if [ -z "$gobin" ]; then
@@ -118,6 +118,7 @@ echo "Run it with:"
 echo "  ${bin_name}"
 echo "Check your email setup with:"
 echo "  ${bin_name} doctor"
+echo "If Himalaya needs an account, ${bin_name} will ask for the account name inside the TUI."
 echo
 echo "If your shell cannot find it, add this to PATH:"
 echo "  export PATH=\"${gobin}:\$PATH\""

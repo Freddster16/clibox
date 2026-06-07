@@ -15,6 +15,7 @@ type viewMode int
 const (
 	inboxView viewMode = iota
 	readerView
+	setupView
 )
 
 type Options struct {
@@ -31,6 +32,11 @@ type inboxLoadedMsg struct {
 	err      error
 }
 
+type accountConfiguredMsg struct {
+	account string
+	err     error
+}
+
 type model struct {
 	messages          []message
 	backend           inboxBackend
@@ -42,6 +48,8 @@ type model struct {
 	status            string
 	account           string
 	mailbox           string
+	setupAccount      string
+	configuring       bool
 	theme             int
 	themeCursor       int
 	themeBeforePicker int
@@ -255,6 +263,7 @@ func NewWithOptions(options Options) model {
 		status:            status,
 		account:           strings.TrimSpace(options.Account),
 		mailbox:           strings.TrimSpace(options.Mailbox),
+		setupAccount:      firstNonEmpty(options.Account, "personal"),
 		theme:             index,
 		themeCursor:       index,
 		themeBeforePicker: index,
@@ -287,6 +296,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case inboxLoadedMsg:
 		m.loading = false
 		if msg.err != nil {
+			if isSetupRequiredError(msg.err) {
+				m.mode = setupView
+				m.messages = nil
+				m.cursor = 0
+				if strings.TrimSpace(m.setupAccount) == "" {
+					m.setupAccount = firstNonEmpty(m.account, "personal")
+				}
+				return m.withStatus(msg.err.Error()), nil
+			}
 			m.status = msg.err.Error()
 			m.messages = nil
 			m.cursor = 0
@@ -304,12 +322,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 		}
 		return m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.mailboxLabel())), nil
+	case accountConfiguredMsg:
+		m.configuring = false
+		if msg.err != nil {
+			return m.withStatus("Himalaya setup failed: " + oneLine(msg.err.Error())), nil
+		}
+		m.account = strings.TrimSpace(msg.account)
+		m.setupAccount = m.account
+		if backend, ok := m.backend.(accountSetupBackend); ok {
+			m.backend = backend.WithAccount(m.account)
+		}
+		m.mode = inboxView
+		m.loading = true
+		m.messages = nil
+		m.cursor = 0
+		return m.withStatus("Himalaya setup finished; loading " + m.mailboxLabel() + "..."), m.loadInbox()
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
 	case tea.KeyMsg:
 		key := msg.String()
+
+		if m.mode == setupView {
+			return m.updateSetup(msg)
+		}
 
 		if m.showThemes {
 			switch key {
@@ -398,12 +435,68 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			m.status = "refreshing " + m.mailboxLabel() + " from Himalaya..."
 			return m, m.loadInbox()
+		case "A":
+			m.mode = setupView
+			m.setupAccount = firstNonEmpty(m.account, m.setupAccount, "personal")
+			m.status = "type a Himalaya account name, then press Enter"
 		case "t":
 			m.showThemes = true
 			m.themeCursor = m.theme
 			m.themeBeforePicker = m.theme
 			m.status = ""
 		}
+	}
+
+	return m, nil
+}
+
+func (m model) updateSetup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	if m.configuring {
+		if key == "ctrl+c" {
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		if len(m.messages) == 0 {
+			return m, tea.Quit
+		}
+		m.mode = inboxView
+		return m.withStatus("account setup canceled"), nil
+	case "enter":
+		account := strings.TrimSpace(m.setupAccount)
+		if account == "" {
+			return m.withStatus("type an account name first"), nil
+		}
+		backend, ok := m.backend.(accountSetupBackend)
+		if !ok {
+			return m.withStatus("this backend cannot configure accounts"), nil
+		}
+		m.configuring = true
+		m.status = "opening Himalaya setup for " + account + "..."
+		cmd := backend.ConfigureAccountCommand(account)
+		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return accountConfiguredMsg{account: account, err: err}
+		})
+	case "backspace", "ctrl+h":
+		m.setupAccount = dropLastRune(m.setupAccount)
+		return m.withStatus("type a Himalaya account name, then press Enter"), nil
+	case "delete":
+		return m, nil
+	}
+
+	if len(msg.Runes) > 0 {
+		for _, r := range msg.Runes {
+			if isAccountNameRune(r) {
+				m.setupAccount += string(r)
+			}
+		}
+		return m.withStatus("type a Himalaya account name, then press Enter"), nil
 	}
 
 	return m, nil
@@ -443,7 +536,9 @@ func (m model) renderCurrentView() string {
 	bodyHeight := max(1, m.height-lipgloss.Height(header)-lipgloss.Height(footer))
 
 	var body string
-	if m.mode == readerView {
+	if m.mode == setupView {
+		body = m.renderSetup(bodyHeight)
+	} else if m.mode == readerView {
 		body = m.renderReader(bodyHeight)
 	} else {
 		body = m.renderInbox(bodyHeight)
@@ -483,6 +578,41 @@ func (m model) renderInbox(height int) string {
 	lines = append(lines, m.renderRows(m.width, height-3)...)
 	lines = append(lines, "")
 	lines = append(lines, styles.muted.Render(fmt.Sprintf("Theme %s. Press t to choose, ? for help.", m.activeTheme().name)))
+	return fitHeight(strings.Join(lines, "\n"), height)
+}
+
+func (m model) renderSetup(height int) string {
+	styles := m.activeTheme().styles
+	width := max(32, m.width)
+	account := m.setupAccount
+	cursor := ""
+	if !m.configuring {
+		cursor = "_"
+	}
+
+	lines := []string{
+		styles.panelTitle.Render("Email setup"),
+		"",
+		styles.readerBody.Width(width).Render("Himalaya needs an account before clibox can read your inbox."),
+		styles.readerBody.Width(width).Render("Choose a short local name for this email account, then press Enter."),
+		"",
+		styles.readerHeader.Width(width).Render("Account name"),
+		styles.selected.Width(min(width, max(20, lipgloss.Width(account)+2))).Render(" " + account + cursor),
+		"",
+		styles.readerBody.Width(width).Render("Example: personal, work, gmail"),
+		"",
+	}
+	if m.configuring {
+		lines = append(lines,
+			styles.readerBody.Width(width).Render("Himalaya's interactive wizard is open in this terminal."),
+			styles.readerBody.Width(width).Render("Finish it there; clibox will reload your inbox afterward."),
+		)
+	} else {
+		lines = append(lines,
+			styles.readerBody.Width(width).Render("Enter opens Himalaya's setup wizard for that account."),
+			styles.readerBody.Width(width).Render("Esc or q cancels setup."),
+		)
+	}
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
 
@@ -628,9 +758,11 @@ func (m model) renderMessage(width, height int, includePreview bool) string {
 func (m model) renderFooter() string {
 	styles := m.activeTheme().styles
 	themeHint := fmt.Sprintf("theme %s: t themes", m.activeTheme().name)
-	hints := themeHint + "  |  j/k move  enter read  R refresh  r reply  c compose  a archive  / search  ? help  q quit"
+	hints := themeHint + "  |  j/k move  enter read  R refresh  A account  r reply  c compose  a archive  / search  ? help  q quit"
 	if m.mode == readerView {
 		hints = themeHint + "  |  b back  r reply  a archive  d delete  ? help  q back"
+	} else if m.mode == setupView {
+		hints = "type account name  enter setup  backspace edit  q quit"
 	}
 	if m.status != "" {
 		hints = m.status + "  |  " + hints
@@ -654,6 +786,7 @@ func (m model) overlayHelp(content string) string {
 		"d          delete selected email (planned)",
 		"/          search current mailbox (planned)",
 		"R          refresh inbox from Himalaya",
+		"A          configure a Himalaya account",
 		"t          open theme picker",
 		"?          close this help",
 		"q          quit or close current view",
@@ -901,4 +1034,25 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func dropLastRune(value string) string {
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return ""
+	}
+	return string(runes[:len(runes)-1])
+}
+
+func isAccountNameRune(r rune) bool {
+	if r >= 'a' && r <= 'z' {
+		return true
+	}
+	if r >= 'A' && r <= 'Z' {
+		return true
+	}
+	if r >= '0' && r <= '9' {
+		return true
+	}
+	return r == '-' || r == '_' || r == '.'
 }

@@ -16,6 +16,7 @@ envelope-level content only until Phase 3 wires full message bodies.
 
 - Starts a Bubble Tea inbox TUI with keyboard navigation and theme selection.
 - Loads real envelope lists through Himalaya instead of shipping fake messages.
+- Prompts for the Himalaya account name inside the TUI when setup is needed.
 - Supports `--account`, `--mailbox`, `--himalaya`, and `--page-size`.
 - Refreshes the envelope list with `R`.
 - Provides `clibox doctor` for setup checks before opening the TUI.
@@ -24,7 +25,7 @@ envelope-level content only until Phase 3 wires full message bodies.
 
 ## Install
 
-Install the latest version from GitHub:
+Install or update the latest `main` build from GitHub:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Freddster16/clibox/main/install.sh | sh
@@ -36,7 +37,8 @@ Homebrew installer. It then installs Himalaya with `brew install himalaya`, and
 installs Go with Homebrew if Go 1.24 or newer is not available. Homebrew may ask
 for your password while setting up system directories.
 
-`clibox` itself is installed with `go install`. If your shell cannot find
+`clibox` itself is installed with `go install` directly from the `main` branch.
+If your shell cannot find
 `clibox` after installation, add Go's bin directory to your `PATH`; the
 installer prints the exact path.
 
@@ -48,15 +50,14 @@ go run .
 
 Phase 2 requires Himalaya for real inbox data. If Himalaya is missing or not yet
 configured, `clibox` shows a setup error in the footer instead of crashing.
-If you see a setup message, run `himalaya account configure personal` directly
-in your terminal first; Himalaya's account wizard is interactive and cannot be
-answered from inside the `clibox` TUI. You can replace `personal` with any
-account name you want, but use the same name with `clibox --account`.
+If Himalaya needs an account, `clibox` asks for the account name inside the TUI.
+Press `Enter` and it temporarily opens Himalaya's interactive setup wizard in
+the same terminal. When the wizard exits, `clibox` reloads your inbox.
 
 If you already installed `clibox` and want the latest UI changes:
 
 ```sh
-go install github.com/Freddster16/clibox@latest
+curl -fsSL https://raw.githubusercontent.com/Freddster16/clibox/main/install.sh | sh
 ```
 
 ## Target experience
@@ -79,7 +80,7 @@ Mailboxes          Inbox                         Reader
 
                                                   I looked at the prototype...
 
-j/k move  enter read  r reply  c compose  a archive  / search  t themes  ? help  q quit
+j/k move  enter read  R refresh  A account  r reply  c compose  a archive  / search  t themes  ? help  q quit
 ```
 
 On wide terminals, `clibox` should show a mailbox rail, inbox list, and reader
@@ -89,7 +90,7 @@ screens: mailbox/list, reader, compose/review.
 The first run should be boring in the best way:
 
 1. Run `clibox`.
-2. Pick an account if more than one account exists.
+2. If setup is needed, type an account name in the TUI and press `Enter`.
 3. Land in the inbox.
 4. Press `Enter` to read, `b` to go back, `r` to reply, `a` to archive, `/` to
    search, `t` to open the theme picker, and `q` to leave.
@@ -116,21 +117,25 @@ IMAP/JMAP/SMTP, message envelopes, folders, authentication, and sending.
 Flow:
 
 ```sh
-# 1. Configure Himalaya interactively first.
-himalaya account configure personal
+# 1. Start the TUI.
+clibox
 
-# 2. Verify Himalaya can read your inbox.
-himalaya envelope list --output json --page-size 5 --account personal --folder INBOX
+# 2. If clibox asks for an account, type a name like "personal" and press Enter.
+# Himalaya's setup wizard opens in the same terminal.
 
-# 3. Start the TUI.
-clibox --account personal
-
-# 4. Optionally choose account or mailbox at launch.
+# 3. Optionally choose account or mailbox at launch after setup exists.
 clibox --account personal
 clibox --mailbox INBOX
 
-# 5. Check local setup without opening the TUI.
+# 4. Check local setup without opening the TUI.
 clibox doctor --account personal
+```
+
+Manual Himalaya setup is still available:
+
+```sh
+himalaya account configure personal
+himalaya envelope list --output json --page-size 5 --account personal --folder INBOX
 ```
 
 Useful launch flags:
@@ -206,6 +211,7 @@ Default keymap:
 | `d` | Delete selected email, with confirmation |
 | `/` | Search current mailbox |
 | `R` | Refresh inbox |
+| `A` | Configure a Himalaya account inside the TUI |
 | `t` | Cycle color theme |
 | `?` | Show contextual help |
 | `q` | Quit or close current view |
