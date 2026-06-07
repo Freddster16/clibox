@@ -126,14 +126,16 @@ clibox
 # clibox detects providers like Gmail, iCloud, Outlook, Yahoo, Fastmail,
 # and Proton Mail, then explains the exact auth detail to prepare.
 
-# 3. Press Enter on the review screen.
+# 3. Press o on the review screen to open the provider setup page in your browser.
+
+# 4. Press Enter on the review screen.
 # Himalaya's setup wizard opens in the same terminal.
 
-# 4. Optionally choose account or mailbox at launch after setup exists.
+# 5. Optionally choose account or mailbox at launch after setup exists.
 clibox --account personal
 clibox --mailbox INBOX
 
-# 5. Check local setup without opening the TUI.
+# 6. Check local setup without opening the TUI.
 clibox doctor --account personal
 ```
 
@@ -146,7 +148,8 @@ himalaya envelope list --output json --page-size 5 --account personal --folder I
 
 Provider guidance currently covers:
 
-- Gmail and Google Mail: app password and full email username.
+- Gmail and Google Mail: opens Google's app-password page, then uses the app
+  password and full email username.
 - iCloud Mail: Apple app-specific password.
 - Outlook, Hotmail, Live, and MSN: app password or enabled IMAP access when
   required.
@@ -155,6 +158,13 @@ Provider guidance currently covers:
 - Proton Mail: Proton Mail Bridge warning before manual Bridge settings.
 - Custom domains: automatic discovery first, then manual IMAP/SMTP only if the
   provider requires it.
+
+Full Gmail browser OAuth is a planned upgrade. Google supports OAuth for
+Gmail IMAP/SMTP through XOAUTH2, but that flow requires a registered Google
+OAuth desktop client and the restricted `https://mail.google.com/` scope. Until
+`clibox` has its own verified Google OAuth client and token storage, the Gmail
+path opens Google's setup page and uses Himalaya's app-password-compatible IMAP
+setup.
 
 Useful launch flags:
 

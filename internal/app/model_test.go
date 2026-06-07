@@ -188,6 +188,23 @@ func TestAccountSetupCanEditAccountName(t *testing.T) {
 	}
 }
 
+func TestProviderReviewCanOpenBrowserHelp(t *testing.T) {
+	m := NewWithOptions(Options{backend: configurableBackend{}})
+	m.mode = setupView
+	m.setupStep = setupReviewStep
+	m.setupEmail = "freddy@gmail.com"
+	m.setupProvider = detectProvider(m.setupEmail)
+
+	next, cmd := m.Update(keyMsg("o"))
+	updated := next.(model)
+	if cmd == nil {
+		t.Fatal("expected o to return browser open command")
+	}
+	if !strings.Contains(updated.status, "opening Gmail setup") {
+		t.Fatalf("expected opening status, got %q", updated.status)
+	}
+}
+
 func TestAccountConfiguredReloadsInboxWithAccount(t *testing.T) {
 	m := NewWithOptions(Options{backend: configurableBackend{}})
 	m.mode = setupView
@@ -374,6 +391,9 @@ func TestProviderDetectionGivesFriendlyGuidance(t *testing.T) {
 			if !strings.Contains(combined, want) {
 				t.Fatalf("expected provider guidance for %s to contain %q, got %+v", email, want, provider)
 			}
+		}
+		if strings.Contains(provider.Name, "Gmail") && provider.HelpURL == "" {
+			t.Fatal("expected Gmail to include browser setup URL")
 		}
 	}
 }

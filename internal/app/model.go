@@ -37,6 +37,11 @@ type accountConfiguredMsg struct {
 	err     error
 }
 
+type providerHelpOpenedMsg struct {
+	provider string
+	err      error
+}
+
 type model struct {
 	messages          []message
 	backend           inboxBackend
@@ -342,6 +347,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.messages = nil
 		m.cursor = 0
 		return m.withStatus("Himalaya setup finished; loading " + m.mailboxLabel() + "..."), m.loadInbox()
+	case providerHelpOpenedMsg:
+		if msg.err != nil {
+			return m.withStatus("could not open browser: " + oneLine(msg.err.Error())), nil
+		}
+		return m.withStatus(msg.provider + " setup opened in your browser; return here when ready"), nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -532,6 +542,18 @@ func (m model) updateSetupReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		return m.startAccountConfiguration()
+	case "o":
+		provider := m.setupProvider
+		if provider.Name == "" {
+			provider = detectProvider(m.setupEmail)
+		}
+		if strings.TrimSpace(provider.HelpURL) == "" {
+			return m.withStatus("no browser setup link for " + provider.Name), nil
+		}
+		m.status = "opening " + provider.Name + " setup in your browser..."
+		return m, func() tea.Msg {
+			return providerHelpOpenedMsg{provider: provider.Name, err: openURL(provider.HelpURL)}
+		}
 	case "e":
 		m.setupStep = setupEmailStep
 		return m.withStatus("edit your email address, then press Enter"), nil
@@ -734,8 +756,11 @@ func (m model) renderSetupReview(width, height int) string {
 	}
 	lines = append(lines,
 		"",
-		styles.readerBody.Width(width).Render("Enter opens Himalaya's setup wizard. e edits email. n edits account name."),
 	)
+	if provider.HelpURL != "" {
+		lines = append(lines, styles.readerBody.Width(width).Render("o opens "+provider.HelpLabel+" in your browser."))
+	}
+	lines = append(lines, styles.readerBody.Width(width).Render("Enter opens Himalaya's setup wizard. e edits email. n edits account name."))
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
 
@@ -917,7 +942,7 @@ func (m model) setupFooterHints() string {
 	}
 	switch m.setupStep {
 	case setupReviewStep:
-		return "enter setup  e edit email  n edit account name  q back"
+		return "o open provider page  enter setup  e edit email  n edit account name  q back"
 	case setupAccountStep:
 		return "type account name  enter review  backspace edit  q back"
 	default:
