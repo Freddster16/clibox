@@ -12,6 +12,16 @@ Status: Phase 2 is implemented. `clibox` now loads the envelope list from
 Himalaya after Himalaya is installed and configured. The reader still shows
 envelope-level content only until Phase 3 wires full message bodies.
 
+## Current implementation
+
+- Starts a Bubble Tea inbox TUI with keyboard navigation and theme selection.
+- Loads real envelope lists through Himalaya instead of shipping fake messages.
+- Supports `--account`, `--mailbox`, `--himalaya`, and `--page-size`.
+- Refreshes the envelope list with `R`.
+- Provides `clibox doctor` for setup checks before opening the TUI.
+- Keeps full message body reading, compose/reply, archive/delete, and search in
+  later phases.
+
 ## Install
 
 Install the latest version from GitHub:
