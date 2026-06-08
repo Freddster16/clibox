@@ -32,6 +32,14 @@ type inboxLoadedMsg struct {
 	err      error
 }
 
+type inboxPageLoadedMsg struct {
+	messages []message
+	page     int
+	serial   int
+	done     bool
+	err      error
+}
+
 type accountConfiguredMsg struct {
 	account string
 	err     error
@@ -50,6 +58,9 @@ type model struct {
 	showHelp          bool
 	showThemes        bool
 	loading           bool
+	loadingMore       bool
+	loadedAll         bool
+	loadSerial        int
 	status            string
 	account           string
 	mailbox           string
@@ -310,8 +321,67 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case inboxPageLoadedMsg:
+		if msg.serial != m.loadSerial {
+			return m, nil
+		}
+		m.loading = false
+		m.loadingMore = false
+		if msg.err != nil {
+			if msg.page == 1 && isSetupRequiredError(msg.err) {
+				m.mode = setupView
+				m.messages = nil
+				m.cursor = 0
+				m.setupStep = setupEmailStep
+				if strings.TrimSpace(m.setupEmail) != "" && m.setupProvider.canAutoConfigure() {
+					m.setupStep = setupSecretStep
+				}
+				if strings.TrimSpace(m.setupAccount) == "" {
+					m.setupAccount = firstNonEmpty(m.account, "personal")
+				}
+				if strings.TrimSpace(m.setupProvider.Name) == "" && validEmailAddress(m.setupEmail) {
+					m.setupProvider = detectProvider(m.setupEmail)
+				}
+				status := msg.err.Error()
+				if m.setupStep == setupSecretStep {
+					status = "paste your " + strings.ToLower(m.setupProvider.secretLabel()) + ", not your email address"
+				}
+				return m.withStatus(status), nil
+			}
+			if msg.page > 1 && len(m.messages) > 0 {
+				m.loadedAll = true
+				return m.withStatus(fmt.Sprintf("loaded %d emails; stopped loading older mail: %s", len(m.messages), oneLine(msg.err.Error()))), nil
+			}
+			m.status = msg.err.Error()
+			m.messages = nil
+			m.cursor = 0
+			return m, nil
+		}
+
+		if msg.page == 1 {
+			m.messages = msg.messages
+			m.cursor = 0
+		} else {
+			m.messages = append(m.messages, msg.messages...)
+		}
+		if m.cursor >= len(m.messages) {
+			m.cursor = max(0, len(m.messages)-1)
+		}
+
+		if msg.done {
+			m.loadedAll = true
+			if len(m.messages) == 0 {
+				return m.withStatus("Himalaya returned no messages for " + m.mailboxLabel()), nil
+			}
+			return m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.mailboxLabel())), nil
+		}
+
+		m.loadingMore = true
+		return m.withStatus(fmt.Sprintf("loaded %d emails; loading older mail in the background...", len(m.messages))), m.loadInboxPage(msg.page+1, msg.serial)
 	case inboxLoadedMsg:
 		m.loading = false
+		m.loadingMore = false
+		m.loadedAll = true
 		if msg.err != nil {
 			if isSetupRequiredError(msg.err) {
 				m.mode = setupView
@@ -363,8 +433,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.mode = inboxView
 		m.loading = true
+		m.loadingMore = false
+		m.loadedAll = false
 		m.messages = nil
 		m.cursor = 0
+		m.loadSerial++
 		return m.withStatus("Himalaya setup finished; loading " + m.mailboxLabel() + "..."), m.loadInbox()
 	case providerHelpOpenedMsg:
 		if msg.err != nil {
@@ -467,6 +540,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.withStatus("search arrives in Phase 5"), nil
 		case "R":
 			m.loading = true
+			m.loadingMore = false
+			m.loadedAll = false
+			m.loadSerial++
 			m.status = "refreshing " + m.mailboxLabel() + " from Himalaya..."
 			return m, m.loadInbox()
 		case "A":
@@ -713,9 +789,23 @@ func (m model) loadInbox() tea.Cmd {
 	}
 
 	backend := m.backend
+	if _, ok := backend.(pagedInboxBackend); ok {
+		return m.loadInboxPage(1, m.loadSerial)
+	}
 	return func() tea.Msg {
 		messages, err := backend.ListEnvelopes(context.Background())
 		return inboxLoadedMsg{messages: messages, err: err}
+	}
+}
+
+func (m model) loadInboxPage(page, serial int) tea.Cmd {
+	backend, ok := m.backend.(pagedInboxBackend)
+	if !ok {
+		return m.loadInbox()
+	}
+	return func() tea.Msg {
+		messages, done, err := backend.ListEnvelopePage(context.Background(), page)
+		return inboxPageLoadedMsg{messages: messages, page: page, serial: serial, done: done, err: err}
 	}
 }
 
@@ -981,7 +1071,7 @@ func (m model) renderMailboxRail(width, height int) string {
 
 func (m model) renderRows(width, height int) []string {
 	styles := m.activeTheme().styles
-	if m.loading {
+	if m.loading && len(m.messages) == 0 {
 		return []string{styles.row.Width(width).Render(truncate("  Loading inbox from Himalaya...", width))}
 	}
 	if len(m.messages) == 0 {
@@ -1030,6 +1120,9 @@ func (m model) renderRows(width, height int) []string {
 			style = styles.selected.Width(width)
 		}
 		rows = append(rows, style.Width(width).Render(truncate(line, width)))
+	}
+	if m.loadingMore && end == len(m.messages) && len(rows) < visible {
+		rows = append(rows, styles.muted.Width(width).Render(truncate("  Loading older mail...", width)))
 	}
 
 	return rows

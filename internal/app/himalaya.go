@@ -19,6 +19,10 @@ type inboxBackend interface {
 	Label() string
 }
 
+type pagedInboxBackend interface {
+	ListEnvelopePage(context.Context, int) ([]message, bool, error)
+}
+
 type accountSetupBackend interface {
 	SaveAccountSetup(accountSetup) error
 	WithAccount(account string) inboxBackend
@@ -79,54 +83,48 @@ func (h himalayaBackend) WithAccount(account string) inboxBackend {
 }
 
 func (h himalayaBackend) ListEnvelopes(ctx context.Context) ([]message, error) {
+	var messages []message
+	for page := 1; ; page++ {
+		pageMessages, done, err := h.ListEnvelopePage(ctx, page)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, pageMessages...)
+		if done {
+			return messages, nil
+		}
+	}
+}
+
+func (h himalayaBackend) ListEnvelopePage(ctx context.Context, page int) ([]message, bool, error) {
 	if h.runner == nil {
 		h.runner = osCommandRunner{}
 	}
 
-	var messages []message
 	var last commandFailure
-	selectedCandidate := -1
-	for page := 1; ; page++ {
-		candidates := h.listCandidates(page)
-		if selectedCandidate >= 0 {
-			candidates = candidates[selectedCandidate : selectedCandidate+1]
+	for _, args := range h.listCandidates(page) {
+		stdout, stderr, err := h.runner.Run(ctx, h.binary, args)
+		if err == nil {
+			messages, parseErr := parseHimalayaMessages(stdout)
+			if parseErr != nil {
+				return nil, false, fmt.Errorf("Himalaya returned unreadable JSON for %s: %w", shellCommand(h.binary, args), parseErr)
+			}
+			done := len(messages) == 0 || (h.pageSize > 0 && len(messages) < h.pageSize)
+			return messages, done, nil
 		}
 
-		pageLoaded := false
-		for index, args := range candidates {
-			stdout, stderr, err := h.runner.Run(ctx, h.binary, args)
-			if err == nil {
-				pageMessages, parseErr := parseHimalayaMessages(stdout)
-				if parseErr != nil {
-					return nil, fmt.Errorf("Himalaya returned unreadable JSON for %s: %w", shellCommand(h.binary, args), parseErr)
-				}
-				if selectedCandidate < 0 {
-					selectedCandidate = index
-				}
-				messages = append(messages, pageMessages...)
-				pageLoaded = true
-				if len(pageMessages) == 0 || (h.pageSize > 0 && len(pageMessages) < h.pageSize) {
-					return messages, nil
-				}
-				break
-			}
-
-			last = commandFailure{program: h.binary, args: args, stdout: stdout, stderr: stderr, err: err}
-			if isMissingExecutable(err) {
-				return nil, describeHimalayaFailure(last)
-			}
-			if looksLikePageEndError(last.output()) {
-				return messages, nil
-			}
-			if !looksLikeCommandShapeError(last.output()) {
-				return nil, describeHimalayaFailure(last)
-			}
+		last = commandFailure{program: h.binary, args: args, stdout: stdout, stderr: stderr, err: err}
+		if isMissingExecutable(err) {
+			return nil, false, describeHimalayaFailure(last)
 		}
-
-		if !pageLoaded {
-			return nil, describeHimalayaFailure(last)
+		if looksLikePageEndError(last.output()) {
+			return nil, true, nil
+		}
+		if !looksLikeCommandShapeError(last.output()) {
+			return nil, false, describeHimalayaFailure(last)
 		}
 	}
+	return nil, false, describeHimalayaFailure(last)
 }
 
 func (h himalayaBackend) listCandidates(page int) [][]string {

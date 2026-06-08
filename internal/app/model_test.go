@@ -90,6 +90,48 @@ func TestPlannedActionsShowStatus(t *testing.T) {
 	}
 }
 
+func TestPagedInboxShowsFirstPageThenLoadsOlderMail(t *testing.T) {
+	backend := &pagedBackend{pages: [][]message{
+		{
+			{ID: "1", From: "Alice", Subject: "First"},
+			{ID: "2", From: "Bob", Subject: "Second"},
+		},
+		{
+			{ID: "3", From: "Cora", Subject: "Older"},
+		},
+	}}
+	m := NewWithOptions(Options{backend: backend})
+
+	first := m.Init()().(inboxPageLoadedMsg)
+	next, cmd := m.Update(first)
+	updated := next.(model)
+	if len(updated.messages) != 2 {
+		t.Fatalf("expected first page to render immediately, got %+v", updated.messages)
+	}
+	if !updated.loadingMore {
+		t.Fatal("expected model to keep loading older mail")
+	}
+	if cmd == nil {
+		t.Fatal("expected next page command")
+	}
+
+	second := cmd().(inboxPageLoadedMsg)
+	next, cmd = updated.Update(second)
+	updated = next.(model)
+	if len(updated.messages) != 3 {
+		t.Fatalf("expected older page to append, got %+v", updated.messages)
+	}
+	if updated.loadingMore {
+		t.Fatal("expected loadingMore to stop after last page")
+	}
+	if !updated.loadedAll {
+		t.Fatal("expected loadedAll after last page")
+	}
+	if cmd != nil {
+		t.Fatal("expected no more page command")
+	}
+}
+
 func TestThemeKeyOpensThemePicker(t *testing.T) {
 	t.Setenv("CLIBOX_THEME", "")
 	m := newTestModel()
@@ -570,6 +612,32 @@ func (b *configurableBackend) SaveAccountSetup(setup accountSetup) error {
 func (b *configurableBackend) WithAccount(account string) inboxBackend {
 	b.account = account
 	return b
+}
+
+type pagedBackend struct {
+	pages [][]message
+	calls []int
+}
+
+func (b *pagedBackend) ListEnvelopes(context.Context) ([]message, error) {
+	var messages []message
+	for _, page := range b.pages {
+		messages = append(messages, page...)
+	}
+	return messages, nil
+}
+
+func (b *pagedBackend) ListEnvelopePage(_ context.Context, page int) ([]message, bool, error) {
+	b.calls = append(b.calls, page)
+	index := page - 1
+	if index < 0 || index >= len(b.pages) {
+		return nil, true, nil
+	}
+	return b.pages[index], index == len(b.pages)-1, nil
+}
+
+func (b *pagedBackend) Label() string {
+	return "paged fake"
 }
 
 func keyMsg(key string) tea.KeyMsg {
