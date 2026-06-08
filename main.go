@@ -14,14 +14,26 @@ import (
 func main() {
 	flags := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	theme := flags.String("theme", "", "start clibox with a theme: nocturne, ember, or lagoon")
-	account := flags.String("account", "", "Himalaya account name to read")
-	mailbox := flags.String("mailbox", "INBOX", "Himalaya mailbox/folder to read")
-	himalaya := flags.String("himalaya", "", "path to the Himalaya binary")
-	pageSize := flags.Int("page-size", 0, "advanced: envelopes to request per page; 0 loads all pages with Himalaya defaults")
+	account := flags.String("account", "", "email account name to read")
+	mailbox := flags.String("mailbox", "INBOX", "mailbox/folder to read")
+	backendBinary := flags.String("backend", "", "advanced: path to the email backend binary")
+	himalaya := flags.String("himalaya", "", "deprecated alias for --backend")
+	pageSize := flags.Int("page-size", 0, "advanced: envelopes to request per page; 0 loads all pages with backend defaults")
 	showThemes := flags.Bool("themes", false, "list available themes")
 	flags.Usage = func() {
 		fmt.Fprintf(flags.Output(), "Usage: %s [doctor] [--theme name] [--account name] [--mailbox name] [--themes]\n\n", os.Args[0])
-		flags.PrintDefaults()
+		fmt.Fprintln(flags.Output(), "  -account string")
+		fmt.Fprintln(flags.Output(), "    \temail account name to read")
+		fmt.Fprintln(flags.Output(), "  -backend string")
+		fmt.Fprintln(flags.Output(), "    \tadvanced: path to the email backend binary")
+		fmt.Fprintln(flags.Output(), "  -mailbox string")
+		fmt.Fprintln(flags.Output(), "    \tmailbox/folder to read (default \"INBOX\")")
+		fmt.Fprintln(flags.Output(), "  -page-size int")
+		fmt.Fprintln(flags.Output(), "    \tadvanced: envelopes to request per page; 0 loads all pages with backend defaults")
+		fmt.Fprintln(flags.Output(), "  -theme string")
+		fmt.Fprintln(flags.Output(), "    \tstart clibox with a theme: nocturne, ember, or lagoon")
+		fmt.Fprintln(flags.Output(), "  -themes")
+		fmt.Fprintln(flags.Output(), "    \tlist available themes")
 	}
 
 	args := os.Args[1:]
@@ -43,7 +55,7 @@ func main() {
 		Theme:    *theme,
 		Account:  *account,
 		Mailbox:  *mailbox,
-		Himalaya: *himalaya,
+		Himalaya: firstNonEmpty(*backendBinary, *himalaya),
 		PageSize: *pageSize,
 	}
 	if doctor {
@@ -61,4 +73,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "clibox failed: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

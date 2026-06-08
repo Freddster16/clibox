@@ -56,7 +56,7 @@ func Doctor(ctx context.Context, options Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Himalaya OK: loaded %d envelopes from %s", len(messages), backend.Label()), nil
+	return fmt.Sprintf("Email connection OK: loaded %d emails from %s", len(messages), backend.Label()), nil
 }
 
 func newHimalayaBackend(options Options) himalayaBackend {
@@ -74,7 +74,7 @@ func newHimalayaBackend(options Options) himalayaBackend {
 }
 
 func (h himalayaBackend) Label() string {
-	return strings.Join(nonEmpty("Himalaya", h.account, h.mailbox), " ")
+	return strings.Join(nonEmpty(h.account, h.mailbox), " ")
 }
 
 func (h himalayaBackend) WithAccount(account string) inboxBackend {
@@ -107,7 +107,7 @@ func (h himalayaBackend) ListEnvelopePage(ctx context.Context, page int) ([]mess
 		if err == nil {
 			messages, parseErr := parseHimalayaMessages(stdout)
 			if parseErr != nil {
-				return nil, false, fmt.Errorf("Himalaya returned unreadable JSON for %s: %w", shellCommand(h.binary, args), parseErr)
+				return nil, false, fmt.Errorf("email backend returned unreadable data: %w", parseErr)
 			}
 			done := len(messages) == 0 || (h.pageSize > 0 && len(messages) < h.pageSize)
 			return messages, done, nil
@@ -361,13 +361,13 @@ func isMissingExecutable(err error) bool {
 
 func describeHimalayaFailure(failure commandFailure) error {
 	if isMissingExecutable(failure.err) {
-		return errors.New("Himalaya is not installed or not on PATH. Install and configure Himalaya, then run clibox again")
+		return errors.New("email backend is not installed yet. Run the clibox installer, then open clibox again")
 	}
 	output := firstNonEmpty(failure.output(), failure.err.Error())
 	if looksLikeSetupPromptError(output) {
 		return setupRequiredError{detail: oneLine(output)}
 	}
-	return fmt.Errorf("%s failed: %s", shellCommand(failure.program, failure.args), oneLine(output))
+	return fmt.Errorf("email command failed: %s", oneLine(output))
 }
 
 type setupRequiredError struct {
@@ -375,7 +375,7 @@ type setupRequiredError struct {
 }
 
 func (e setupRequiredError) Error() string {
-	return "Himalaya is installed but account setup is not finished yet. Open clibox to finish provider setup; if an email is already configured, clibox will continue at the password step"
+	return "email account setup is not finished yet. Open clibox to finish provider setup; if an email is already configured, clibox will continue at the password step"
 }
 
 func isSetupRequiredError(err error) bool {

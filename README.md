@@ -8,22 +8,21 @@ at home next to Neovim, Codex, OpenCode, Hermes, tmux, and a shell: open the
 inbox, move with `j/k`, read with `Enter`, reply in `$EDITOR`, archive with
 `a`, search with `/`, change themes with `t`, and quit with `q`.
 
-Status: Phase 2 is implemented. `clibox` now loads the envelope list from
-Himalaya after Himalaya is installed and configured. The reader still shows
-envelope-level content only until Phase 3 wires full message bodies. First-run
-setup now happens inside `clibox` for common providers instead of sending you
-through Himalaya's duplicate account wizard.
+Status: Phase 2 is implemented. `clibox` now loads real inbox envelopes after
+account setup. The reader still shows envelope-level content only until Phase 3
+wires full message bodies. First-run setup now happens inside `clibox` for
+common providers.
 
 ## Current implementation
 
 - Starts a Bubble Tea inbox TUI with keyboard navigation and theme selection.
-- Loads real envelope lists through Himalaya instead of shipping fake messages.
+- Loads real envelope lists instead of shipping fake messages.
   The newest page appears first, then older pages continue loading in the
   background.
-- Starts setup with one email address, detects common providers, writes the
-  Himalaya account config in the background, and saves the password/app password
-  to macOS Keychain.
-- Supports `--account`, `--mailbox`, `--himalaya`, and `--page-size`.
+- Starts setup with one email address, detects common providers, configures the
+  mail connection in the background, and saves the password/app password to
+  macOS Keychain.
+- Supports `--account`, `--mailbox`, and advanced backend tuning flags.
 - Refreshes the envelope list with `R`.
 - Provides `clibox doctor` for setup checks before opening the TUI.
 - Keeps full message body reading, compose/reply, archive/delete, and search in
@@ -37,11 +36,11 @@ Install or update the latest `main` build from GitHub:
 curl -fsSL https://raw.githubusercontent.com/Freddster16/clibox/main/install.sh | sh
 ```
 
-The installer checks for Homebrew, Himalaya, and Go before installing `clibox`.
+The installer checks for Homebrew, the email backend, and Go before installing `clibox`.
 If Homebrew is missing on macOS or Linux, it installs Homebrew using the official
-Homebrew installer. It then installs Himalaya with `brew install himalaya`, and
-installs Go with Homebrew if Go 1.24 or newer is not available. Homebrew may ask
-for your password while setting up system directories.
+Homebrew installer. It then installs the email backend and Go with Homebrew if
+Go 1.24 or newer is not available. Homebrew may ask for your password while
+setting up system directories.
 
 `clibox` itself is installed with `go install` directly from the `main` branch.
 If your shell cannot find
@@ -54,15 +53,15 @@ For local development:
 go run .
 ```
 
-Phase 2 requires Himalaya for real inbox data. If Himalaya is missing or not yet
-configured, `clibox` shows a setup error in the footer instead of crashing.
-If Himalaya needs an account, `clibox` asks for your email address once, detects
-the provider, chooses known IMAP/SMTP settings, asks for the required password or
-app password, writes `~/.config/himalaya/config.toml`, stores the secret in
-macOS Keychain, and reloads your inbox.
+Phase 2 requires the bundled email backend for real inbox data. If the backend
+is missing or setup is not finished, `clibox` shows a friendly setup prompt
+instead of crashing. If an account is needed, `clibox` asks for your email
+address once, detects the provider, chooses known IMAP/SMTP settings, asks for
+the required password or app password, stores the secret in macOS Keychain, and
+reloads your inbox.
 
 Automatic secret storage is macOS-first right now. On other platforms, manual
-Himalaya setup is still available until `clibox` grows a portable secret-store
+backend setup is still available until `clibox` grows a portable secret-store
 adapter.
 
 If you already installed `clibox` and want the latest UI changes:
@@ -122,9 +121,8 @@ Theme selection lives inside the TUI:
 
 ## Real-email quick start
 
-`clibox` relies on [Himalaya](https://github.com/pimalaya/himalaya) for email
-protocols at first. Himalaya already handles the hard parts: accounts,
-IMAP/JMAP/SMTP, message envelopes, folders, authentication, and sending.
+`clibox` gives you a terminal-native inbox: start it, finish account setup if
+needed, and read mail without leaving the shell.
 
 Flow:
 
@@ -140,7 +138,7 @@ clibox
 # screen / Ctrl+O on the password screen to open it in your browser.
 
 # 4. Press Enter on the review screen, then paste the password/app password.
-# clibox writes Himalaya's IMAP/SMTP config and saves the secret to Keychain.
+# clibox configures the mail connection and saves the secret to Keychain.
 
 # 5. Optionally choose account or mailbox at launch after setup exists.
 clibox --account personal
@@ -150,7 +148,8 @@ clibox --mailbox INBOX
 clibox doctor --account personal
 ```
 
-Manual Himalaya setup is still available:
+Manual backend setup is still available for advanced users. The current
+implementation uses Himalaya internally:
 
 ```sh
 himalaya account configure personal
@@ -174,28 +173,25 @@ Full Gmail browser OAuth is a planned upgrade. Google supports OAuth for
 Gmail IMAP/SMTP through XOAUTH2, but that flow requires a registered Google
 OAuth desktop client and the restricted `https://mail.google.com/` scope. Until
 `clibox` has its own verified Google OAuth client and token storage, the Gmail
-path opens Google's setup page and uses Himalaya's app-password-compatible IMAP
-setup.
+path opens Google's setup page and uses app-password-compatible IMAP setup.
 
 Useful launch flags:
 
 ```sh
 clibox --account personal --mailbox INBOX
-clibox --himalaya /path/to/himalaya
+clibox --backend /path/to/backend
 clibox --page-size 50
 clibox doctor --account personal --mailbox INBOX
 ```
 
 By default, `clibox` shows the newest page first and keeps loading older pages
 in the background until the mailbox is complete. `--page-size` is only an
-advanced tuning knob for how many envelopes Himalaya should return per request;
+advanced tuning knob for how many envelopes the backend should return per request;
 it is not an inbox limit.
 
 `clibox` does not write email credentials into its own config. On macOS it saves
-the password/app password to Keychain and writes a Himalaya `auth.cmd` entry that
-reads the secret from Keychain when Himalaya connects. It reads envelope data
-through the existing Himalaya setup and keeps command details inside the backend
-adapter.
+the password/app password to Keychain and keeps command details inside the
+backend adapter.
 The adapter currently tries the stable Himalaya v1 command first
 (`himalaya envelope list --output json`) and falls back to the in-development
 v2 shape (`himalaya envelopes list --json`) only when the command shape is
@@ -212,7 +208,7 @@ Run the project locally with:
 go run .
 ```
 
-Check the Himalaya setup without opening the full-screen TUI:
+Check the email setup without opening the full-screen TUI:
 
 ```sh
 go run . doctor
@@ -227,7 +223,7 @@ go build ./...
 
 Production code no longer carries a fake inbox. Test fixtures live in the test
 suite, while the app itself starts by loading envelopes from the configured
-Himalaya backend.
+email backend.
 
 ## Planned interface
 
@@ -311,13 +307,13 @@ Build the TUI without touching real email:
 
 Done in the second implementation pass.
 
-The inbox list is connected to Himalaya:
+The inbox list is connected to the email backend:
 
-- Runs the configured Himalaya list command through the adapter.
+- Runs the configured envelope-list command through the adapter.
 - Shows the first page quickly, then loads older pages in the background.
 - Parses JSON into internal envelope structs.
 - Shows sender, subject, read/unread flags, and date.
-- Displays clear setup errors when Himalaya is missing or incompatible.
+- Displays clear setup errors when the backend is missing or incompatible.
 - Refreshes the current envelope list with `R`.
 
 ### Phase 3: Real message reader

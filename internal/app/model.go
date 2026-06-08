@@ -371,7 +371,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.done {
 			m.loadedAll = true
 			if len(m.messages) == 0 {
-				return m.withStatus("Himalaya returned no messages for " + m.mailboxLabel()), nil
+				return m.withStatus("No emails found in " + m.mailboxLabel()), nil
 			}
 			return m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.mailboxLabel())), nil
 		}
@@ -411,7 +411,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.messages = msg.messages
 		if len(m.messages) == 0 {
 			m.cursor = 0
-			return m.withStatus("Himalaya returned no messages for " + m.mailboxLabel()), nil
+			return m.withStatus("No emails found in " + m.mailboxLabel()), nil
 		}
 		if m.cursor >= len(m.messages) {
 			m.cursor = len(m.messages) - 1
@@ -423,7 +423,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case accountConfiguredMsg:
 		m.configuring = false
 		if msg.err != nil {
-			return m.withStatus("Himalaya setup failed: " + oneLine(msg.err.Error())), nil
+			return m.withStatus("Account setup failed: " + oneLine(msg.err.Error())), nil
 		}
 		m.account = strings.TrimSpace(msg.account)
 		m.setupAccount = m.account
@@ -438,7 +438,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.messages = nil
 		m.cursor = 0
 		m.loadSerial++
-		return m.withStatus("Himalaya setup finished; loading " + m.mailboxLabel() + "..."), m.loadInbox()
+		return m.withStatus("Account setup finished; loading " + m.mailboxLabel() + "..."), m.loadInbox()
 	case providerHelpOpenedMsg:
 		if msg.err != nil {
 			return m.withStatus("could not open browser: " + oneLine(msg.err.Error())), nil
@@ -533,7 +533,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			return m.withStatus("compose will open $EDITOR in Phase 4"), nil
 		case "a":
-			return m.withStatus("archive will connect to Himalaya in Phase 5"), nil
+			return m.withStatus("archive arrives in Phase 5"), nil
 		case "d":
 			return m.withStatus("delete confirmation arrives in Phase 5"), nil
 		case "/":
@@ -543,7 +543,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadingMore = false
 			m.loadedAll = false
 			m.loadSerial++
-			m.status = "refreshing " + m.mailboxLabel() + " from Himalaya..."
+			m.status = "refreshing " + m.mailboxLabel() + "..."
 			return m, m.loadInbox()
 		case "A":
 			m.mode = setupView
@@ -883,7 +883,7 @@ func (m model) renderSetup(height int) string {
 		lines := []string{
 			styles.panelTitle.Render("Email setup"),
 			"",
-			styles.readerBody.Width(width).Render("clibox is writing the Himalaya account config and saving the password to your OS credential store."),
+			styles.readerBody.Width(width).Render("clibox is saving your account settings and password to your OS credential store."),
 			styles.readerBody.Width(width).Render("Your inbox will reload automatically when setup finishes."),
 		}
 		return fitHeight(strings.Join(lines, "\n"), height)
@@ -907,7 +907,7 @@ func (m model) renderSetupEmail(width, height int) string {
 	lines := []string{
 		styles.panelTitle.Render("Add email account"),
 		"",
-		styles.readerBody.Width(width).Render("Start with your email address. clibox will detect the provider, choose the mail servers, and set up Himalaya without sending you through another wizard."),
+		styles.readerBody.Width(width).Render("Start with your email address. clibox will detect the provider, choose the mail servers, and set up your account without sending you through another wizard."),
 		"",
 		styles.readerHeader.Width(width).Render("Email address"),
 		styles.selected.Width(min(width, max(30, lipgloss.Width(email)+2))).Render(" " + email),
@@ -979,9 +979,9 @@ func (m model) renderSetupSecret(width, height int) string {
 		styles.readerHeader.Width(width).Render("Account name: " + m.setupAccount),
 		"",
 	}
-	prompt := "Paste your " + provider.secretLabel() + ". clibox will save it to macOS Keychain, write Himalaya's IMAP/SMTP config, and reload your inbox."
+	prompt := "Paste your " + provider.secretLabel() + ". clibox will save it to macOS Keychain, configure your mail connection, and reload your inbox."
 	if provider.Name == "Gmail" {
-		prompt = "Paste the 16-character Google app password, not your Gmail address or normal Google password. clibox will save it to macOS Keychain, write Himalaya's IMAP/SMTP config, and reload your inbox."
+		prompt = "Paste the 16-character Google app password, not your Gmail address or normal Google password. clibox will save it to macOS Keychain, configure your mail connection, and reload your inbox."
 	}
 	lines = append(lines, styledLines(wrapText(prompt, width-2), styles.readerBody, width)...)
 	if provider.HelpURL != "" {
@@ -1008,7 +1008,7 @@ func (m model) renderSetupAccount(width, height int) string {
 	lines := []string{
 		styles.panelTitle.Render("Account name"),
 		"",
-		styles.readerBody.Width(width).Render("This is a short local name for the account inside Himalaya and clibox."),
+		styles.readerBody.Width(width).Render("This is a short local name for the account inside clibox."),
 		"",
 		styles.readerHeader.Width(width).Render("Account name"),
 		styles.selected.Width(min(width, max(24, lipgloss.Width(account)+2))).Render(" " + account),
@@ -1072,7 +1072,7 @@ func (m model) renderMailboxRail(width, height int) string {
 func (m model) renderRows(width, height int) []string {
 	styles := m.activeTheme().styles
 	if m.loading && len(m.messages) == 0 {
-		return []string{styles.row.Width(width).Render(truncate("  Loading inbox from Himalaya...", width))}
+		return []string{styles.row.Width(width).Render(truncate("  Loading inbox...", width))}
 	}
 	if len(m.messages) == 0 {
 		return []string{styles.row.Width(width).Render(truncate("  No messages loaded. Press R to retry.", width))}
@@ -1142,7 +1142,7 @@ func (m model) renderMessage(width, height int, includePreview bool) string {
 		return fitHeight(strings.Join([]string{
 			styles.panelTitle.Render("Reader"),
 			styles.readerBody.Width(width).Render("No message selected."),
-			styles.readerBody.Width(width).Render("Configure Himalaya, then press R to load your inbox."),
+			styles.readerBody.Width(width).Render("Finish account setup, then press R to load your inbox."),
 		}, "\n"), height)
 	}
 
@@ -1179,7 +1179,7 @@ func (m model) renderFooter() string {
 
 func (m model) setupFooterHints() string {
 	if m.configuring {
-		return "finish Himalaya setup in this terminal"
+		return "finish account setup"
 	}
 	switch m.setupStep {
 	case setupReviewStep:
@@ -1206,8 +1206,8 @@ func (m model) overlayHelp(content string) string {
 		"a          archive selected email (planned)",
 		"d          delete selected email (planned)",
 		"/          search current mailbox (planned)",
-		"R          refresh inbox from Himalaya",
-		"A          configure a Himalaya account",
+		"R          refresh inbox",
+		"A          add or update an email account",
 		"t          open theme picker",
 		"?          close this help",
 		"q          quit or close current view",

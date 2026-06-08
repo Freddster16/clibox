@@ -149,13 +149,13 @@ func detectProvider(email string) providerInfo {
 			Name:          "Proton Mail",
 			Account:       "proton",
 			AuthSummary:   "Proton Mail usually needs Proton Mail Bridge before IMAP clients can connect.",
-			ManualWarning: "Set up Proton Mail Bridge first, then use the Bridge IMAP/SMTP details in Himalaya.",
+			ManualWarning: "Set up Proton Mail Bridge first, then use the Bridge IMAP/SMTP details for the mail connection.",
 			HelpLabel:     "Open Proton Mail Bridge",
 			HelpURL:       "https://proton.me/mail/bridge",
 			Instructions: []string{
 				"Install and sign in to Proton Mail Bridge before continuing.",
 				"Use the local Bridge username and password, not your normal Proton password.",
-				"Choose custom/manual settings in Himalaya if autodiscovery does not find the Bridge.",
+				"Choose custom/manual settings if autodiscovery does not find the Bridge.",
 			},
 		}
 	default:
