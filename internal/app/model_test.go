@@ -599,6 +599,14 @@ func TestProviderDetectionGivesFriendlyGuidance(t *testing.T) {
 	}
 }
 
+func TestOpenURLRejectsNonWebSchemes(t *testing.T) {
+	for _, rawURL := range []string{"", "notaurl", "https://", "file:///tmp/secret", "javascript:alert(1)"} {
+		if err := openURL(rawURL); err == nil {
+			t.Fatalf("expected %q to be rejected", rawURL)
+		}
+	}
+}
+
 func TestGmailSecretNormalizationRemovesSpaces(t *testing.T) {
 	provider := detectProvider("freddy@gmail.com")
 	got := provider.normalizeSecret(" abcd efgh ijkl mnop ")

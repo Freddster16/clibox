@@ -92,6 +92,25 @@ func TestParseHimalayaEnvelopeListResponseWrapper(t *testing.T) {
 	}
 }
 
+func TestParseAddressStringHandlesCommonShapes(t *testing.T) {
+	cases := []struct {
+		raw   string
+		name  string
+		email string
+	}{
+		{raw: "Alice <alice@example.com>", name: "Alice", email: "alice@example.com"},
+		{raw: `"Alice Example" <alice@example.com>`, name: "Alice Example", email: "alice@example.com"},
+		{raw: "alice@example.com", name: "", email: "alice@example.com"},
+	}
+
+	for _, tc := range cases {
+		name, email := parseAddressString(tc.raw)
+		if name != tc.name || email != tc.email {
+			t.Fatalf("parseAddressString(%q) = (%q, %q), want (%q, %q)", tc.raw, name, email, tc.name, tc.email)
+		}
+	}
+}
+
 func TestHimalayaBackendFallsBackToV2Shape(t *testing.T) {
 	runner := &fakeCommandRunner{results: []fakeCommandResult{
 		{

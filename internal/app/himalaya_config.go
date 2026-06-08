@@ -64,7 +64,7 @@ func (h himalayaBackend) SaveAccountSetup(setup accountSetup) error {
 func saveCredential(setup accountSetup) (credentialRef, error) {
 	service := credentialServiceName(setup)
 	if runtime.GOOS == "darwin" {
-		cmd := exec.Command("security", "add-generic-password", "-a", setup.Email, "-s", service, "-w", setup.Secret, "-U")
+		cmd := exec.Command("security", "add-generic-password", "-a", setup.Email, "-s", service, "-w", setup.Secret, "-U") // #nosec G204 -- fixed macOS Keychain command; arguments are not shell-evaluated.
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return credentialRef{}, fmt.Errorf("could not save password to macOS Keychain: %s", oneLine(firstNonEmpty(string(output), err.Error())))
 		}
@@ -84,7 +84,7 @@ func writeHimalayaAccountConfig(path string, setup accountSetup, credential cred
 	}
 
 	var content string
-	if data, err := os.ReadFile(path); err == nil {
+	if data, err := os.ReadFile(path); err == nil { // #nosec G304 -- path is the user's selected mail config path.
 		content = string(data)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("could not read Himalaya config: %w", err)
@@ -94,12 +94,25 @@ func writeHimalayaAccountConfig(path string, setup accountSetup, credential cred
 	block := buildHimalayaAccountBlock(setup, credential, defaultAccount)
 	next := upsertAccountBlock(content, setup.Account, block)
 
-	tmp := path + ".clibox-tmp"
-	if err := os.WriteFile(tmp, []byte(next), 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".clibox-*.toml")
+	if err != nil {
+		return fmt.Errorf("could not create temporary Himalaya config: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("could not secure temporary Himalaya config: %w", err)
+	}
+	if _, err := tmp.WriteString(next); err != nil {
+		_ = tmp.Close()
 		return fmt.Errorf("could not write Himalaya config: %w", err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("could not close temporary Himalaya config: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("could not replace Himalaya config: %w", err)
 	}
 	return nil
@@ -110,7 +123,7 @@ func himalayaAccountHint(account string) (accountSetup, bool) {
 	if err != nil {
 		return accountSetup{}, false
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is the user's selected mail config path.
 	if err != nil {
 		return accountSetup{}, false
 	}

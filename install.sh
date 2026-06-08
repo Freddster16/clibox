@@ -3,7 +3,7 @@ set -eu
 
 repo="github.com/Freddster16/clibox"
 bin_name="clibox"
-min_go_minor="24"
+min_go_minor="25"
 
 load_homebrew_path() {
   if command -v brew >/dev/null 2>&1; then
@@ -104,7 +104,7 @@ install_himalaya
 install_go
 
 echo "Installing ${bin_name} from ${repo} main..."
-GOPROXY=direct go install "${repo}@main"
+go install "${repo}@main"
 
 gobin="$(go env GOBIN)"
 if [ -z "$gobin" ]; then

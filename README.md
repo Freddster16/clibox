@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/Freddster16/clibox/main/install.sh 
 The installer checks for Homebrew, the email backend, and Go before installing `clibox`.
 If Homebrew is missing on macOS or Linux, it installs Homebrew using the official
 Homebrew installer. It then installs the email backend and Go with Homebrew if
-Go 1.24 or newer is not available. Homebrew may ask for your password while
+Go 1.25 or newer is not available. Homebrew may ask for your password while
 setting up system directories.
 
 `clibox` itself is installed with `go install` directly from the `main` branch.

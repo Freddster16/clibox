@@ -38,6 +38,7 @@ func detectProvider(email string) providerInfo {
 	domain := emailDomain(email)
 	switch domain {
 	case "gmail.com", "googlemail.com":
+		// #nosec G101 -- provider instructions mention app passwords; no secret value is embedded.
 		return providerInfo{
 			Name:         "Gmail",
 			Account:      "gmail",
@@ -64,6 +65,7 @@ func detectProvider(email string) providerInfo {
 			},
 		}
 	case "icloud.com", "me.com", "mac.com":
+		// #nosec G101 -- provider instructions mention app-specific passwords; no secret value is embedded.
 		return providerInfo{
 			Name:         "iCloud Mail",
 			Account:      "icloud",
@@ -105,6 +107,7 @@ func detectProvider(email string) providerInfo {
 			},
 		}
 	case "yahoo.com", "ymail.com", "rocketmail.com":
+		// #nosec G101 -- provider instructions mention app passwords; no secret value is embedded.
 		return providerInfo{
 			Name:         "Yahoo Mail",
 			Account:      "yahoo",
@@ -125,6 +128,7 @@ func detectProvider(email string) providerInfo {
 			},
 		}
 	case "fastmail.com":
+		// #nosec G101 -- provider instructions mention app passwords; no secret value is embedded.
 		return providerInfo{
 			Name:         "Fastmail",
 			Account:      "fastmail",
@@ -249,13 +253,34 @@ func openURL(rawURL string) error {
 	if rawURL == "" {
 		return errors.New("missing URL")
 	}
+	if !isWebURL(rawURL) {
+		return errors.New("only http and https URLs can be opened")
+	}
 
 	switch runtime.GOOS {
 	case "darwin":
-		return exec.Command("open", rawURL).Start()
+		return exec.Command("open", rawURL).Start() // #nosec G204 -- URL is restricted to http(s), and no shell is invoked.
 	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL).Start()
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL).Start() // #nosec G204 -- URL is restricted to http(s), and no shell is invoked.
 	default:
-		return exec.Command("xdg-open", rawURL).Start()
+		return exec.Command("xdg-open", rawURL).Start() // #nosec G204 -- URL is restricted to http(s), and no shell is invoked.
 	}
+}
+
+func isWebURL(rawURL string) bool {
+	if strings.ContainsAny(rawURL, " \t\r\n") {
+		return false
+	}
+	rest, ok := strings.CutPrefix(rawURL, "https://")
+	if !ok {
+		rest, ok = strings.CutPrefix(rawURL, "http://")
+	}
+	if !ok {
+		return false
+	}
+	host := rest
+	if slash := strings.IndexByte(host, '/'); slash >= 0 {
+		host = host[:slash]
+	}
+	return strings.TrimSpace(host) != ""
 }

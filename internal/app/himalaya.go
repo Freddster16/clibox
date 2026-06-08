@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/mail"
 	"os"
 	"os/exec"
 	"strconv"
@@ -197,7 +196,7 @@ func (r osCommandRunner) Run(ctx context.Context, program string, args []string)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, program, args...)
+	cmd := exec.CommandContext(ctx, program, args...) // #nosec G204 -- backend binary is user-configurable, and args are not shell-evaluated.
 	cmd.Env = append(os.Environ(), "NO_COLOR=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -302,13 +301,47 @@ func address(raw any) (string, string) {
 		}
 		return name, email
 	case string:
-		parsed, err := mail.ParseAddress(typed)
-		if err == nil {
-			return parsed.Name, parsed.Address
-		}
-		return strings.TrimSpace(typed), ""
+		return parseAddressString(typed)
 	}
 	return "", ""
+}
+
+func parseAddressString(raw string) (string, string) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", ""
+	}
+	if len(value) > 4096 {
+		value = value[:4096]
+	}
+
+	if start := strings.LastIndex(value, "<"); start >= 0 {
+		if end := strings.Index(value[start:], ">"); end > 0 {
+			email := strings.TrimSpace(value[start+1 : start+end])
+			name := cleanAddressName(value[:start])
+			if validEmailAddress(email) {
+				return name, email
+			}
+		}
+	}
+
+	fields := strings.Fields(value)
+	for _, field := range fields {
+		candidate := strings.Trim(field, "<>(),;")
+		if validEmailAddress(candidate) {
+			return "", candidate
+		}
+	}
+	if validEmailAddress(value) {
+		return "", value
+	}
+	return cleanAddressName(value), ""
+}
+
+func cleanAddressName(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, `"'`)
+	return strings.TrimSpace(value)
 }
 
 func flagList(raw any) []string {
