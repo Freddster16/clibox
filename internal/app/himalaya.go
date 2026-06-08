@@ -26,6 +26,11 @@ type messageBodyBackend interface {
 	ReadMessage(context.Context, message) (string, error)
 }
 
+type draftBackend interface {
+	PrepareDraft(context.Context, draftRequest) (string, error)
+	SendDraft(context.Context, string) error
+}
+
 type accountSetupBackend interface {
 	SaveAccountSetup(accountSetup) error
 	WithAccount(account string) inboxBackend
@@ -41,6 +46,7 @@ type himalayaBackend struct {
 
 type commandRunner interface {
 	Run(context.Context, string, []string) ([]byte, []byte, error)
+	RunInput(context.Context, string, []string, string) ([]byte, []byte, error)
 }
 
 type osCommandRunner struct{}
@@ -162,6 +168,71 @@ func (h himalayaBackend) ReadMessage(ctx context.Context, msg message) (string, 
 	return "", describeHimalayaFailure(last)
 }
 
+func (h himalayaBackend) PrepareDraft(ctx context.Context, req draftRequest) (string, error) {
+	if h.runner == nil {
+		h.runner = osCommandRunner{}
+	}
+
+	var candidates [][]string
+	var fallback string
+	switch req.Kind {
+	case replyDraft:
+		fallback = localReplyTemplate(req.Message, h.defaultFrom())
+		id := strings.TrimSpace(req.Message.ID)
+		if id == "" {
+			return fallback, nil
+		}
+		candidates = h.replyDraftCandidates(id)
+	default:
+		fallback = localComposeTemplate(h.defaultFrom())
+		candidates = h.composeDraftCandidates()
+	}
+
+	var last commandFailure
+	for _, args := range candidates {
+		stdout, stderr, err := h.runner.Run(ctx, h.binary, args)
+		if err == nil {
+			return normalizeDraftTemplate(stdout), nil
+		}
+
+		last = commandFailure{program: h.binary, args: args, stdout: stdout, stderr: stderr, err: err}
+		if isMissingExecutable(err) {
+			return "", describeHimalayaFailure(last)
+		}
+		if !looksLikeCommandShapeError(last.output()) {
+			return "", describeHimalayaFailure(last)
+		}
+	}
+
+	return fallback, nil
+}
+
+func (h himalayaBackend) SendDraft(ctx context.Context, content string) error {
+	if h.runner == nil {
+		h.runner = osCommandRunner{}
+	}
+	if strings.TrimSpace(content) == "" {
+		return errors.New("draft is empty")
+	}
+
+	var last commandFailure
+	for _, args := range h.sendDraftCandidates() {
+		stdout, stderr, err := h.runner.RunInput(ctx, h.binary, args, ensureFinalNewline(content))
+		if err == nil {
+			return nil
+		}
+
+		last = commandFailure{program: h.binary, args: args, stdout: stdout, stderr: stderr, err: err}
+		if isMissingExecutable(err) {
+			return describeHimalayaFailure(last)
+		}
+		if !looksLikeCommandShapeError(last.output()) {
+			return describeHimalayaFailure(last)
+		}
+	}
+	return describeHimalayaFailure(last)
+}
+
 func (h himalayaBackend) listCandidates(page int) [][]string {
 	pageNumber := strconv.Itoa(page)
 	v1 := []string{"envelope", "list", "--output", "json", "--page", pageNumber}
@@ -192,12 +263,56 @@ func (h himalayaBackend) readCandidates(id string) [][]string {
 	return [][]string{v1, v2}
 }
 
+func (h himalayaBackend) composeDraftCandidates() [][]string {
+	v1 := appendFlags([]string{"template", "write", "-H", "To:", "-H", "Subject:"}, "--account", h.account)
+	return [][]string{v1}
+}
+
+func (h himalayaBackend) replyDraftCandidates(id string) [][]string {
+	v1 := appendFlags([]string{"template", "reply"}, "--account", h.account, "--folder", h.mailbox)
+	v1 = append(v1, id)
+	return [][]string{v1}
+}
+
+func (h himalayaBackend) sendDraftCandidates() [][]string {
+	v1 := appendFlags([]string{"template", "send"}, "--account", h.account)
+
+	v2 := []string{"messages", "send"}
+	if strings.TrimSpace(h.account) != "" {
+		v2 = append(v2, "-a", h.account)
+	}
+
+	return [][]string{v1, v2}
+}
+
+func (h himalayaBackend) defaultFrom() string {
+	hint, ok := himalayaAccountHint(h.account)
+	if !ok || strings.TrimSpace(hint.Email) == "" {
+		return ""
+	}
+	if strings.TrimSpace(hint.DisplayName) == "" {
+		return hint.Email
+	}
+	return fmt.Sprintf("%s <%s>", strings.TrimSpace(hint.DisplayName), strings.TrimSpace(hint.Email))
+}
+
 func (r osCommandRunner) Run(ctx context.Context, program string, args []string) ([]byte, []byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	return r.run(ctx, program, args, "", false, 30*time.Second)
+}
+
+func (r osCommandRunner) RunInput(ctx context.Context, program string, args []string, input string) ([]byte, []byte, error) {
+	return r.run(ctx, program, args, input, true, 2*time.Minute)
+}
+
+func (r osCommandRunner) run(ctx context.Context, program string, args []string, input string, hasInput bool, timeout time.Duration) ([]byte, []byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, program, args...) // #nosec G204 -- backend binary is user-configurable, and args are not shell-evaluated.
 	cmd.Env = append(os.Environ(), "NO_COLOR=1")
+	if hasInput {
+		cmd.Stdin = strings.NewReader(input)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -357,9 +357,115 @@ func TestHimalayaBackendReadFallsBackToV2Shape(t *testing.T) {
 	}
 }
 
+func TestHimalayaBackendPreparesComposeDraft(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stdout: []byte("From: Freddy <freddy@example.com>\nTo: \nSubject: \n\n"),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:  "himalaya",
+		account: "personal",
+		runner:  runner,
+	}
+
+	draft, err := backend.PrepareDraft(context.Background(), draftRequest{Kind: composeDraft})
+	if err != nil {
+		t.Fatalf("expected compose draft to prepare: %v", err)
+	}
+	if !strings.Contains(draft, "To:") || !strings.Contains(draft, "Subject:") {
+		t.Fatalf("expected friendly compose headers, got %q", draft)
+	}
+	want := "himalaya template write -H To: -H Subject: --account personal"
+	if len(runner.calls) != 1 || runner.calls[0] != want {
+		t.Fatalf("unexpected compose command:\nwant %q\ngot  %v", want, runner.calls)
+	}
+}
+
+func TestHimalayaBackendPreparesReplyDraft(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stdout: []byte("From: Freddy <freddy@example.com>\nTo: Alice <alice@example.com>\nSubject: Re: Design notes\n\n> hello\n"),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:  "himalaya",
+		account: "personal",
+		mailbox: "INBOX",
+		runner:  runner,
+	}
+
+	draft, err := backend.PrepareDraft(context.Background(), draftRequest{
+		Kind:    replyDraft,
+		Message: message{ID: "42", Email: "alice@example.com", Subject: "Design notes"},
+	})
+	if err != nil {
+		t.Fatalf("expected reply draft to prepare: %v", err)
+	}
+	if !strings.Contains(draft, "Subject: Re: Design notes") || !strings.Contains(draft, "> hello") {
+		t.Fatalf("unexpected reply draft: %q", draft)
+	}
+	want := "himalaya template reply --account personal --folder INBOX 42"
+	if len(runner.calls) != 1 || runner.calls[0] != want {
+		t.Fatalf("unexpected reply command:\nwant %q\ngot  %v", want, runner.calls)
+	}
+}
+
+func TestHimalayaBackendSendsDraftThroughStdin(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{{stdout: []byte("Message successfully sent!")}}}
+	backend := himalayaBackend{
+		binary:  "himalaya",
+		account: "personal",
+		runner:  runner,
+	}
+	content := "To: alice@example.com\nSubject: private\n\nThis body must not be an argv value.\n"
+
+	if err := backend.SendDraft(context.Background(), content); err != nil {
+		t.Fatalf("expected draft send to succeed: %v", err)
+	}
+	want := "himalaya template send --account personal"
+	if len(runner.calls) != 1 || runner.calls[0] != want {
+		t.Fatalf("unexpected send command:\nwant %q\ngot  %v", want, runner.calls)
+	}
+	if len(runner.inputs) != 1 || runner.inputs[0] != content {
+		t.Fatalf("expected draft content on stdin, got %#v", runner.inputs)
+	}
+	if strings.Contains(runner.calls[0], "This body") || strings.Contains(runner.calls[0], "private") {
+		t.Fatalf("draft content leaked into argv: %q", runner.calls[0])
+	}
+}
+
+func TestHimalayaBackendSendDraftFallsBackToMessagesSend(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stderr: []byte("error: unrecognized subcommand 'template'"),
+			err:    errors.New("exit status 2"),
+		},
+		{
+			stdout: []byte("Message successfully sent!"),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:  "himalaya",
+		account: "personal",
+		runner:  runner,
+	}
+
+	if err := backend.SendDraft(context.Background(), "To: alice@example.com\n\nHi\n"); err != nil {
+		t.Fatalf("expected fallback send to succeed: %v", err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected two send attempts, got %v", runner.calls)
+	}
+	if runner.calls[1] != "himalaya messages send -a personal" {
+		t.Fatalf("unexpected fallback send command: %q", runner.calls[1])
+	}
+}
+
 type fakeCommandRunner struct {
 	results []fakeCommandResult
 	calls   []string
+	inputs  []string
 }
 
 type fakeCommandResult struct {
@@ -370,6 +476,17 @@ type fakeCommandResult struct {
 
 func (r *fakeCommandRunner) Run(_ context.Context, program string, args []string) ([]byte, []byte, error) {
 	r.calls = append(r.calls, shellCommand(program, args))
+	if len(r.results) == 0 {
+		return nil, nil, errors.New("unexpected command")
+	}
+	result := r.results[0]
+	r.results = r.results[1:]
+	return result.stdout, result.stderr, result.err
+}
+
+func (r *fakeCommandRunner) RunInput(_ context.Context, program string, args []string, input string) ([]byte, []byte, error) {
+	r.calls = append(r.calls, shellCommand(program, args))
+	r.inputs = append(r.inputs, input)
 	if len(r.results) == 0 {
 		return nil, nil, errors.New("unexpected command")
 	}

@@ -31,6 +31,8 @@ func (m model) renderCurrentView() string {
 	var body string
 	if m.mode == setupView {
 		body = m.renderSetup(bodyHeight)
+	} else if m.mode == draftReviewView {
+		body = m.renderDraftReview(bodyHeight)
 	} else if m.mode == readerView {
 		body = m.renderReader(bodyHeight)
 	} else {
@@ -332,6 +334,45 @@ func (m model) renderReader(height int) string {
 	return m.renderMessage(max(32, m.width), height, false)
 }
 
+func (m model) renderDraftReview(height int) string {
+	styles := m.activeTheme().styles
+	width := max(32, m.width)
+	summary := m.draft.Summary
+	subject := firstNonEmpty(strings.TrimSpace(summary.Subject), "(no subject)")
+
+	lines := []string{
+		styles.panelTitle.Render(m.draft.Kind.title()),
+		"",
+		styles.readerHeader.Width(width).Render("From: " + firstNonEmpty(summary.From, "(backend default)")),
+		styles.readerHeader.Width(width).Render("To: " + firstNonEmpty(summary.To, "(missing recipient)")),
+	}
+	if strings.TrimSpace(summary.Cc) != "" {
+		lines = append(lines, styles.readerHeader.Width(width).Render("Cc: "+summary.Cc))
+	}
+	if strings.TrimSpace(summary.Bcc) != "" {
+		lines = append(lines, styles.readerHeader.Width(width).Render("Bcc: "+summary.Bcc))
+	}
+	lines = append(lines,
+		styles.readerHeader.Width(width).Render("Subject: "+subject),
+		"",
+	)
+
+	if m.draft.Sending {
+		lines = append(lines, styles.readerBody.Width(width).Render("Sending email..."))
+	} else if err := validateDraftForSend(summary); err != nil {
+		lines = append(lines, styles.unread.Width(width).Render(err.Error()), "")
+	}
+
+	body := firstNonEmpty(summary.Body, "(empty body)")
+	bodyLines := wrapText(body, width-2)
+	available := max(1, height-len(lines)-1)
+	if len(bodyLines) > available {
+		bodyLines = append(bodyLines[:available], "...")
+	}
+	lines = append(lines, styledLines(bodyLines, styles.readerBody, width)...)
+	return fitHeight(strings.Join(lines, "\n"), height)
+}
+
 func (m model) renderMessage(width, height int, includePreview bool) string {
 	styles := m.activeTheme().styles
 	if len(m.messages) == 0 {
@@ -373,6 +414,11 @@ func (m model) renderFooter() string {
 		hints = themeHint + "  |  j/k scroll  b back  r reply  a archive  d delete  ? help  q back"
 	} else if m.mode == setupView {
 		hints = m.setupFooterHints()
+	} else if m.mode == draftReviewView {
+		hints = "s send  e edit  b discard  ? help"
+		if m.draft.Sending {
+			hints = "sending email..."
+		}
 	}
 	if m.status != "" {
 		hints = m.status + "  |  " + hints
@@ -406,8 +452,10 @@ func (m model) overlayHelp(content string) string {
 		"j / k      scroll in reader",
 		"PgUp/PgDn  jump in reader",
 		"b / Esc    back to inbox",
-		"r          reply in $EDITOR (planned)",
-		"c          compose in $EDITOR (planned)",
+		"r          reply in $EDITOR",
+		"c          compose in $EDITOR",
+		"s          send reviewed draft",
+		"e          edit reviewed draft",
 		"a          archive selected email (planned)",
 		"d          delete selected email (planned)",
 		"/          search current mailbox (planned)",

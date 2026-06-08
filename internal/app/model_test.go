@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -160,6 +162,150 @@ func TestPlannedActionsShowStatus(t *testing.T) {
 	m = pressKey(t, m, "j")
 	if m.status != "" {
 		t.Fatal("expected navigation to clear status")
+	}
+}
+
+func TestComposeDraftFlowReviewsAndSends(t *testing.T) {
+	backend := &draftFlowBackend{
+		draft: "From: Freddy <freddy@example.com>\nTo: \nSubject: \n\n",
+	}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = testMessages()
+	m.loading = false
+
+	next, cmd := m.Update(keyMsg("c"))
+	updated := next.(model)
+	if cmd == nil {
+		t.Fatal("expected compose to prepare a draft")
+	}
+	prepared := cmd().(draftPreparedMsg)
+	defer removeDraftFile(prepared.path)
+
+	next, editorCmd := updated.Update(prepared)
+	updated = next.(model)
+	if editorCmd == nil {
+		t.Fatal("expected prepared draft to open an editor command")
+	}
+	if updated.draft.Path == "" {
+		t.Fatal("expected draft path to be stored")
+	}
+
+	edited := "From: Freddy <freddy@example.com>\nTo: alice@example.com\nSubject: Hello\n\nHi Alice.\n"
+	if err := os.WriteFile(updated.draft.Path, []byte(edited), 0o600); err != nil {
+		t.Fatalf("expected test draft write to succeed: %v", err)
+	}
+
+	next, _ = updated.Update(draftEditorFinishedMsg{path: updated.draft.Path, serial: updated.draft.Serial})
+	updated = next.(model)
+	if updated.mode != draftReviewView {
+		t.Fatalf("expected draft review view, got %v", updated.mode)
+	}
+	if updated.draft.Summary.To != "alice@example.com" || updated.draft.Summary.Subject != "Hello" {
+		t.Fatalf("expected edited headers in summary, got %+v", updated.draft.Summary)
+	}
+
+	next, cmd = updated.Update(keyMsg("s"))
+	updated = next.(model)
+	if cmd == nil || !updated.draft.Sending {
+		t.Fatal("expected s to start sending")
+	}
+	sent := cmd().(draftSentMsg)
+	next, _ = updated.Update(sent)
+	updated = next.(model)
+
+	if backend.sent != edited {
+		t.Fatalf("expected edited draft to be sent, got %q", backend.sent)
+	}
+	if updated.mode != inboxView {
+		t.Fatalf("expected compose send to return to inbox, got %v", updated.mode)
+	}
+	if _, err := os.Stat(prepared.path); !os.IsNotExist(err) {
+		t.Fatalf("expected sent draft tempfile to be removed, stat err: %v", err)
+	}
+}
+
+func TestReplyDraftFlowUsesSelectedMessage(t *testing.T) {
+	backend := &draftFlowBackend{
+		draft: "From: Freddy <freddy@example.com>\nTo: Alice <alice@example.com>\nSubject: Re: Design notes\n\n> old body\n",
+	}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = testMessages()
+	m.mode = readerView
+	m.loading = false
+
+	next, cmd := m.Update(keyMsg("r"))
+	updated := next.(model)
+	if cmd == nil {
+		t.Fatal("expected reply to prepare a draft")
+	}
+	prepared := cmd().(draftPreparedMsg)
+	defer removeDraftFile(prepared.path)
+
+	if backend.request.Kind != replyDraft {
+		t.Fatalf("expected reply draft request, got %v", backend.request.Kind)
+	}
+	if backend.request.Message.ID != "1" || backend.request.Message.Email != "alice@example.com" {
+		t.Fatalf("expected selected message in reply request, got %+v", backend.request.Message)
+	}
+
+	next, _ = updated.Update(prepared)
+	updated = next.(model)
+	next, _ = updated.Update(draftEditorFinishedMsg{path: updated.draft.Path, serial: updated.draft.Serial})
+	updated = next.(model)
+	if updated.mode != draftReviewView {
+		t.Fatalf("expected draft review view, got %v", updated.mode)
+	}
+	if updated.draft.Summary.To != "Alice <alice@example.com>" {
+		t.Fatalf("expected reply recipient in summary, got %+v", updated.draft.Summary)
+	}
+}
+
+func TestDraftReviewRequiresRecipientBeforeSending(t *testing.T) {
+	backend := &draftFlowBackend{}
+	m := NewWithOptions(Options{backend: backend})
+	m.mode = draftReviewView
+	m.draft = draftState{
+		Kind:    composeDraft,
+		Content: "From: Freddy <freddy@example.com>\nSubject: Missing To\n\nHi.\n",
+		Summary: parseDraftSummary("From: Freddy <freddy@example.com>\nSubject: Missing To\n\nHi.\n"),
+		Serial:  1,
+	}
+	m.draftSerial = 1
+
+	next, cmd := m.Update(keyMsg("s"))
+	updated := next.(model)
+	if cmd != nil {
+		t.Fatal("expected missing recipient to block send command")
+	}
+	if !strings.Contains(updated.status, "recipient") {
+		t.Fatalf("expected recipient validation status, got %q", updated.status)
+	}
+	if backend.sent != "" {
+		t.Fatalf("expected backend not to send, got %q", backend.sent)
+	}
+}
+
+func TestEditorErrorWithDraftStillOpensReview(t *testing.T) {
+	path, err := writeDraftFile("To: alice@example.com\nSubject: Saved\n\nHi.\n")
+	if err != nil {
+		t.Fatalf("expected draft file to be created: %v", err)
+	}
+	defer removeDraftFile(path)
+
+	m := NewWithOptions(Options{backend: &draftFlowBackend{}})
+	m.draftSerial = 3
+	m.draft = draftState{Kind: composeDraft, Path: path, Serial: 3}
+
+	next, _ := m.Update(draftEditorFinishedMsg{path: path, serial: 3, err: errors.New("exit status 1")})
+	updated := next.(model)
+	if updated.mode != draftReviewView {
+		t.Fatalf("expected editor error to show draft review, got %v", updated.mode)
+	}
+	if updated.draft.Summary.Subject != "Saved" {
+		t.Fatalf("expected saved draft summary, got %+v", updated.draft.Summary)
+	}
+	if !strings.Contains(updated.status, "editor reported an error") {
+		t.Fatalf("expected editor warning status, got %q", updated.status)
 	}
 }
 
@@ -739,6 +885,30 @@ func (b *pagedBackend) ListEnvelopePage(_ context.Context, page int) ([]message,
 
 func (b *pagedBackend) Label() string {
 	return "paged fake"
+}
+
+type draftFlowBackend struct {
+	draft   string
+	sent    string
+	request draftRequest
+}
+
+func (b *draftFlowBackend) ListEnvelopes(context.Context) ([]message, error) {
+	return testMessages(), nil
+}
+
+func (b *draftFlowBackend) Label() string {
+	return "draft fake"
+}
+
+func (b *draftFlowBackend) PrepareDraft(_ context.Context, request draftRequest) (string, error) {
+	b.request = request
+	return b.draft, nil
+}
+
+func (b *draftFlowBackend) SendDraft(_ context.Context, content string) error {
+	b.sent = content
+	return nil
 }
 
 func keyMsg(key string) tea.KeyMsg {

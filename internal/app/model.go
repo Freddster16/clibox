@@ -15,6 +15,7 @@ const (
 	inboxView viewMode = iota
 	readerView
 	setupView
+	draftReviewView
 )
 
 type Options struct {
@@ -56,6 +57,25 @@ type providerHelpOpenedMsg struct {
 	err      error
 }
 
+type draftPreparedMsg struct {
+	request draftRequest
+	content string
+	path    string
+	serial  int
+	err     error
+}
+
+type draftEditorFinishedMsg struct {
+	path   string
+	serial int
+	err    error
+}
+
+type draftSentMsg struct {
+	serial int
+	err    error
+}
+
 type model struct {
 	messages          []message
 	backend           inboxBackend
@@ -82,6 +102,8 @@ type model struct {
 	theme             int
 	themeCursor       int
 	themeBeforePicker int
+	draft             draftState
+	draftSerial       int
 	width             int
 	height            int
 }
@@ -276,6 +298,62 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.withStatus("could not open browser: " + oneLine(msg.err.Error())), nil
 		}
 		return m.withStatus(msg.provider + " setup opened in your browser; return here when ready"), nil
+	case draftPreparedMsg:
+		if msg.serial != m.draftSerial {
+			removeDraftFile(msg.path)
+			return m, nil
+		}
+		if msg.err != nil {
+			return m.withStatus("could not prepare draft: " + oneLine(msg.err.Error())), nil
+		}
+		m.draft = draftState{
+			Kind:    msg.request.Kind,
+			Message: msg.request.Message,
+			Path:    msg.path,
+			Content: msg.content,
+			Summary: parseDraftSummary(msg.content),
+			Serial:  msg.serial,
+		}
+		return m.withStatus("opening " + msg.request.Kind.name() + " in " + m.editorLabel() + "..."), m.openDraftEditor()
+	case draftEditorFinishedMsg:
+		if msg.serial != m.draftSerial {
+			return m, nil
+		}
+		if msg.err != nil {
+			content, readErr := readDraftFile(msg.path)
+			if readErr != nil {
+				m.cleanupDraft()
+				return m.withStatus("editor closed with error: " + oneLine(msg.err.Error())), nil
+			}
+			m.draft.Path = msg.path
+			m.draft.Content = content
+			m.draft.Summary = parseDraftSummary(content)
+			m.draft.Sending = false
+			m.mode = draftReviewView
+			return m.withStatus("editor reported an error; review draft before sending"), nil
+		}
+		content, err := readDraftFile(msg.path)
+		if err != nil {
+			return m.withStatus("could not read draft: " + oneLine(err.Error())), nil
+		}
+		m.draft.Path = msg.path
+		m.draft.Content = content
+		m.draft.Summary = parseDraftSummary(content)
+		m.draft.Sending = false
+		m.mode = draftReviewView
+		return m.withStatus("review draft; press s to send or e to edit"), nil
+	case draftSentMsg:
+		if msg.serial != m.draftSerial {
+			return m, nil
+		}
+		m.draft.Sending = false
+		if msg.err != nil {
+			return m.withStatus("could not send email: " + oneLine(msg.err.Error())), nil
+		}
+		nextMode := m.draftReturnMode()
+		m.cleanupDraft()
+		m.mode = nextMode
+		return m.withStatus("Email sent"), nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -324,6 +402,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showHelp = false
 			}
 			return m, nil
+		}
+
+		if m.mode == draftReviewView {
+			return m.updateDraftReview(msg)
 		}
 
 		switch key {
@@ -384,10 +466,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "r":
 			if m.mode == readerView {
-				return m.withStatus("reply will open $EDITOR in Phase 4"), nil
+				return m.startDraft(replyDraft)
 			}
 		case "c":
-			return m.withStatus("compose will open $EDITOR in Phase 4"), nil
+			return m.startDraft(composeDraft)
 		case "a":
 			return m.withStatus("archive arrives in Phase 5"), nil
 		case "d":
@@ -417,6 +499,116 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m model) startDraft(kind draftKind) (model, tea.Cmd) {
+	backend, ok := m.backend.(draftBackend)
+	if !ok {
+		return m.withStatus("this backend cannot send email yet"), nil
+	}
+
+	request := draftRequest{Kind: kind}
+	if kind == replyDraft {
+		if m.mode != readerView || len(m.messages) == 0 {
+			return m.withStatus("open an email before replying"), nil
+		}
+		request.Message = m.selectedMessage()
+		if strings.TrimSpace(request.Message.Email) == "" {
+			return m.withStatus("selected email has no reply address"), nil
+		}
+	}
+
+	if m.draft.Path != "" {
+		removeDraftFile(m.draft.Path)
+	}
+	m.draftSerial++
+	serial := m.draftSerial
+	m.draft = draftState{Kind: kind, Message: request.Message, Serial: serial}
+
+	return m.withStatus("preparing " + kind.name() + " draft..."), m.prepareDraft(backend, request, serial)
+}
+
+func (m model) prepareDraft(backend draftBackend, request draftRequest, serial int) tea.Cmd {
+	return func() tea.Msg {
+		content, err := backend.PrepareDraft(context.Background(), request)
+		if err != nil {
+			return draftPreparedMsg{request: request, serial: serial, err: err}
+		}
+		path, err := writeDraftFile(content)
+		return draftPreparedMsg{request: request, content: content, path: path, serial: serial, err: err}
+	}
+}
+
+func (m model) openDraftEditor() tea.Cmd {
+	path := m.draft.Path
+	serial := m.draft.Serial
+	cmd, err := draftEditorCommand(path)
+	if err != nil {
+		return func() tea.Msg {
+			return draftEditorFinishedMsg{path: path, serial: serial, err: err}
+		}
+	}
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return draftEditorFinishedMsg{path: path, serial: serial, err: err}
+	})
+}
+
+func (m model) updateDraftReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	if m.draft.Sending {
+		if key == "ctrl+c" {
+			m.cleanupDraft()
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
+	switch key {
+	case "ctrl+c":
+		m.cleanupDraft()
+		return m, tea.Quit
+	case "q", "esc", "b":
+		nextMode := m.draftReturnMode()
+		m.cleanupDraft()
+		m.mode = nextMode
+		return m.withStatus("draft discarded"), nil
+	case "e":
+		return m.withStatus("opening " + m.draft.Kind.name() + " in " + m.editorLabel() + "..."), m.openDraftEditor()
+	case "s":
+		summary := parseDraftSummary(m.draft.Content)
+		if err := validateDraftForSend(summary); err != nil {
+			m.draft.Summary = summary
+			return m.withStatus(err.Error()), nil
+		}
+		backend, ok := m.backend.(draftBackend)
+		if !ok {
+			return m.withStatus("this backend cannot send email yet"), nil
+		}
+		m.draft.Summary = summary
+		m.draft.Sending = true
+		return m.withStatus("sending email..."), m.sendDraft(backend, m.draft.Content, m.draft.Serial)
+	case "?":
+		m.showHelp = true
+	}
+	return m, nil
+}
+
+func (m model) sendDraft(backend draftBackend, content string, serial int) tea.Cmd {
+	return func() tea.Msg {
+		return draftSentMsg{serial: serial, err: backend.SendDraft(context.Background(), content)}
+	}
+}
+
+func (m *model) cleanupDraft() {
+	removeDraftFile(m.draft.Path)
+	m.draft = draftState{}
+}
+
+func (m model) draftReturnMode() viewMode {
+	if m.draft.Kind == replyDraft && len(m.messages) > 0 {
+		return readerView
+	}
+	return inboxView
 }
 
 func (m model) loadInbox() tea.Cmd {
@@ -565,4 +757,8 @@ func (m model) mailboxLabel() string {
 		return m.mailbox
 	}
 	return "INBOX"
+}
+
+func (m model) editorLabel() string {
+	return firstNonEmpty(os.Getenv("CLIBOX_EDITOR"), os.Getenv("VISUAL"), os.Getenv("EDITOR"), "nvim")
 }

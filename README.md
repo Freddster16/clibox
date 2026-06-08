@@ -8,10 +8,11 @@ at home next to Neovim, Codex, OpenCode, Hermes, tmux, and a shell: open the
 inbox, move with `j/k`, read with `Enter`, reply in `$EDITOR`, archive with
 `a`, search with `/`, change themes with `t`, and quit with `q`.
 
-Status: Phase 3 is implemented. `clibox` loads real inbox envelopes after
+Status: Phase 4 is implemented. `clibox` loads real inbox envelopes after
 account setup, opens the selected email body on demand with `Enter`, and keeps
 opened bodies cached for the current session. First-run setup happens inside
-`clibox` for common providers.
+`clibox` for common providers. Compose and reply now open the user's terminal
+editor, return to a review screen, and send only after confirmation.
 
 ## Current implementation
 
@@ -24,10 +25,13 @@ opened bodies cached for the current session. First-run setup happens inside
 - Starts setup with one email address, detects common providers, configures the
   mail connection in the background, and saves the password/app password to
   macOS Keychain.
+- Composes new email with `c`, replies from the reader with `r`, opens
+  `$EDITOR`, then returns to a review screen where `s` sends and `e` edits
+  again.
 - Supports `--account`, `--mailbox`, and advanced backend tuning flags.
 - Refreshes the envelope list with `R`.
 - Provides `clibox doctor` for setup checks before opening the TUI.
-- Keeps compose/reply, archive/delete, and search in later phases.
+- Keeps archive/delete and search in later phases.
 
 ## Install
 
@@ -104,8 +108,9 @@ The first run should be boring in the best way:
 2. If setup is needed, type your email address in the TUI and press `Enter`.
 3. Paste the provider password or app password once.
 4. Land in the inbox.
-5. Press `Enter` to read, `b` to go back, `r` to reply, `a` to archive, `/` to
-   search, `t` to open the theme picker, and `q` to leave.
+5. Press `Enter` to read, `b` to go back, `r` to reply, `c` to compose, `s` to
+   send a reviewed draft, `a` to archive, `/` to search, `t` to open the theme
+   picker, and `q` to leave.
 
 ## Themes
 
@@ -145,7 +150,10 @@ clibox
 clibox --account personal
 clibox --mailbox INBOX
 
-# 6. Check local setup without opening the TUI.
+# 6. Reply or compose from the TUI. clibox opens CLIBOX_EDITOR, VISUAL,
+# EDITOR, or nvim, then returns to a review screen before sending.
+
+# 7. Check local setup without opening the TUI.
 clibox doctor --account personal
 ```
 
@@ -185,6 +193,14 @@ clibox --page-size 50
 clibox doctor --account personal --mailbox INBOX
 ```
 
+Editor selection is environment-based today:
+
+```sh
+EDITOR=nvim clibox
+VISUAL="code --wait" clibox
+CLIBOX_EDITOR="vim -n" clibox
+```
+
 By default, `clibox` shows the newest page first and keeps loading older pages
 in the background until the mailbox is complete. `--page-size` is only an
 advanced tuning knob for how many envelopes the backend should return per request;
@@ -192,7 +208,8 @@ it is not an inbox limit.
 
 `clibox` does not write email credentials into its own config. On macOS it saves
 the password/app password to Keychain and keeps command details inside the
-backend adapter.
+backend adapter. Draft files are temporary owner-only files, and email content
+is sent to the backend over stdin rather than as command-line arguments.
 The adapter currently tries the stable Himalaya v1 command first
 (`himalaya envelope list --output json`) and falls back to the in-development
 v2 shape (`himalaya envelopes list --json`) only when the command shape is
@@ -255,12 +272,14 @@ Default keymap:
 | `b` | Back to the previous view |
 | `r` | Reply in `$EDITOR` |
 | `c` | Compose in `$EDITOR` |
+| `s` | Send the reviewed draft |
+| `e` | Edit the reviewed draft again |
 | `a` | Archive selected email |
 | `d` | Delete selected email, with confirmation |
 | `/` | Search current mailbox |
 | `R` | Refresh inbox |
 | `A` | Add or update an email account inside the TUI |
-| `t` | Cycle color theme |
+| `t` | Open the theme picker |
 | `?` | Show contextual help |
 | `q` | Quit or close current view |
 
@@ -282,9 +301,11 @@ Build `clibox` in Go:
   available.
 - Account setup: provider detection plus generated Himalaya config for common
   IMAP/SMTP providers, with secrets stored in macOS Keychain.
-- Drafts: create temporary draft files, open `$EDITOR` with `nvim` as the
-  fallback, then send through Himalaya after the editor exits.
-- Config: TOML at `~/.config/clibox/config.toml`.
+- Drafts: create temporary owner-only draft files, open `CLIBOX_EDITOR`,
+  `VISUAL`, `EDITOR`, or `nvim`, show a review step after the editor exits, and
+  send through Himalaya over stdin.
+- Planned app config: TOML at `~/.config/clibox/config.toml`; current account
+  connection details live in the backend config generated during setup.
 
 The Himalaya command surface differs between released and in-development
 versions, so exact invocations should stay inside the adapter. The rest of the
@@ -333,12 +354,15 @@ Read the selected email:
 
 ### Phase 4: Reply and compose
 
+Done in the fourth implementation pass.
+
 Keep writing email inside the user's editor:
 
 - Generate reply and compose drafts.
-- Open `$EDITOR`, falling back to `nvim`.
-- Send only after the editor exits cleanly.
+- Open `CLIBOX_EDITOR`, `VISUAL`, `EDITOR`, or `nvim`.
+- Send only after the editor exits and the user confirms with `s`.
 - Show a review/confirmation step before sending in v0.1.
+- Keep draft content out of command-line arguments by sending it through stdin.
 
 ### Phase 5: Inbox actions
 
