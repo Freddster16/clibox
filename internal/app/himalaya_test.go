@@ -276,6 +276,68 @@ func TestHimalayaBackendExplainsSetupPromptFailure(t *testing.T) {
 	}
 }
 
+func TestHimalayaBackendReadsMessageBody(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stdout: []byte("Hey Freddy,\r\n\r\nThe build passed.\r\n"),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:  "himalaya",
+		account: "personal",
+		mailbox: "INBOX",
+		runner:  runner,
+	}
+
+	body, err := backend.ReadMessage(context.Background(), message{ID: "42"})
+	if err != nil {
+		t.Fatalf("expected message body to load: %v", err)
+	}
+	if body != "Hey Freddy,\n\nThe build passed." {
+		t.Fatalf("unexpected normalized body: %q", body)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected one read command, got %v", runner.calls)
+	}
+	want := "himalaya message read --no-headers --account personal --folder INBOX 42"
+	if runner.calls[0] != want {
+		t.Fatalf("unexpected read command:\nwant %q\ngot  %q", want, runner.calls[0])
+	}
+}
+
+func TestHimalayaBackendReadFallsBackToV2Shape(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stderr: []byte("error: unrecognized subcommand 'message'"),
+			err:    errors.New("exit status 2"),
+		},
+		{
+			stdout: []byte("Plain body"),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:  "himalaya",
+		account: "personal",
+		mailbox: "INBOX",
+		runner:  runner,
+	}
+
+	body, err := backend.ReadMessage(context.Background(), message{ID: "99"})
+	if err != nil {
+		t.Fatalf("expected fallback read command to succeed: %v", err)
+	}
+	if body != "Plain body" {
+		t.Fatalf("unexpected body: %q", body)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected two command attempts, got %v", runner.calls)
+	}
+	want := "himalaya messages read --no-headers -a personal -m INBOX 99"
+	if runner.calls[1] != want {
+		t.Fatalf("unexpected fallback read command:\nwant %q\ngot  %q", want, runner.calls[1])
+	}
+}
+
 type fakeCommandRunner struct {
 	results []fakeCommandResult
 	calls   []string

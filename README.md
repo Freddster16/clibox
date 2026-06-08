@@ -8,10 +8,10 @@ at home next to Neovim, Codex, OpenCode, Hermes, tmux, and a shell: open the
 inbox, move with `j/k`, read with `Enter`, reply in `$EDITOR`, archive with
 `a`, search with `/`, change themes with `t`, and quit with `q`.
 
-Status: Phase 2 is implemented. `clibox` now loads real inbox envelopes after
-account setup. The reader still shows envelope-level content only until Phase 3
-wires full message bodies. First-run setup now happens inside `clibox` for
-common providers.
+Status: Phase 3 is implemented. `clibox` loads real inbox envelopes after
+account setup, opens the selected email body on demand with `Enter`, and keeps
+opened bodies cached for the current session. First-run setup happens inside
+`clibox` for common providers.
 
 ## Current implementation
 
@@ -19,14 +19,15 @@ common providers.
 - Loads real envelope lists instead of shipping fake messages.
   The newest page appears first, then older pages continue loading in the
   background.
+- Opens real plain-text message bodies on demand with `Enter`, then scrolls the
+  reader with `j/k`, `PgUp/PgDn`, `Home`, and `End`.
 - Starts setup with one email address, detects common providers, configures the
   mail connection in the background, and saves the password/app password to
   macOS Keychain.
 - Supports `--account`, `--mailbox`, and advanced backend tuning flags.
 - Refreshes the envelope list with `R`.
 - Provides `clibox doctor` for setup checks before opening the TUI.
-- Keeps full message body reading, compose/reply, archive/delete, and search in
-  later phases.
+- Keeps compose/reply, archive/delete, and search in later phases.
 
 ## Install
 
@@ -53,12 +54,12 @@ For local development:
 go run .
 ```
 
-Phase 2 requires the bundled email backend for real inbox data. If the backend
-is missing or setup is not finished, `clibox` shows a friendly setup prompt
-instead of crashing. If an account is needed, `clibox` asks for your email
-address once, detects the provider, chooses known IMAP/SMTP settings, asks for
-the required password or app password, stores the secret in macOS Keychain, and
-reloads your inbox.
+Real email requires the bundled email backend for inbox data. If the backend is
+missing or setup is not finished, `clibox` shows a friendly setup prompt instead
+of crashing. If an account is needed, `clibox` asks for your email address once,
+detects the provider, chooses known IMAP/SMTP settings, asks for the required
+password or app password, stores the secret in macOS Keychain, and reloads your
+inbox.
 
 Automatic secret storage is macOS-first right now. On other platforms, manual
 backend setup is still available until `clibox` grows a portable secret-store
@@ -247,8 +248,10 @@ Default keymap:
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` | Move down / up |
+| `j` / `k` | Move in the inbox; scroll in the reader |
 | `Enter` | Open selected email |
+| `PgUp` / `PgDn` | Jump through the open email |
+| `Home` / `End` | Jump to the top or bottom of the open email |
 | `b` | Back to the previous view |
 | `r` | Reply in `$EDITOR` |
 | `c` | Compose in `$EDITOR` |
@@ -318,12 +321,15 @@ The inbox list is connected to the email backend:
 
 ### Phase 3: Real message reader
 
+Done in the third implementation pass.
+
 Read the selected email:
 
 - Fetch body content through the adapter.
 - Show headers and plain text content in a scrollable reader.
-- Mark messages read only when the backend does so naturally or when the user
-  explicitly requests that behavior later.
+- Load the body only when the user presses `Enter`, so inbox startup stays fast.
+- Cache opened bodies for the current session.
+- Let the backend's normal read behavior mark opened mail as read.
 
 ### Phase 4: Reply and compose
 

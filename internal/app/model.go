@@ -40,6 +40,13 @@ type inboxPageLoadedMsg struct {
 	err      error
 }
 
+type messageBodyLoadedMsg struct {
+	id     string
+	body   string
+	serial int
+	err    error
+}
+
 type accountConfiguredMsg struct {
 	account string
 	err     error
@@ -61,6 +68,9 @@ type model struct {
 	loadingMore       bool
 	loadedAll         bool
 	loadSerial        int
+	loadingMessageID  string
+	messageLoadSerial int
+	readerOffset      int
 	status            string
 	account           string
 	mailbox           string
@@ -420,6 +430,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 		}
 		return m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.mailboxLabel())), nil
+	case messageBodyLoadedMsg:
+		if msg.serial != m.messageLoadSerial {
+			return m, nil
+		}
+		m.loadingMessageID = ""
+		if msg.err != nil {
+			m = m.setMessageBodyError(msg.id, oneLine(msg.err.Error()))
+			return m.withStatus("could not load email: " + oneLine(msg.err.Error())), nil
+		}
+		m = m.setMessageBody(msg.id, msg.body)
+		return m.withStatus("email loaded"), nil
 	case accountConfiguredMsg:
 		m.configuring = false
 		if msg.err != nil {
@@ -506,20 +527,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "?":
 			m.showHelp = true
 		case "up", "k":
-			if m.mode == inboxView && m.cursor > 0 {
+			if m.mode == readerView {
+				m.readerOffset = max(0, m.readerOffset-1)
+				m.status = ""
+			} else if m.mode == inboxView && m.cursor > 0 {
 				m.cursor--
 				m.status = ""
 			}
 		case "down", "j":
-			if m.mode == inboxView && m.cursor < len(m.messages)-1 {
+			if m.mode == readerView {
+				m.readerOffset = min(m.maxReaderOffset(), m.readerOffset+1)
+				m.status = ""
+			} else if m.mode == inboxView && m.cursor < len(m.messages)-1 {
 				m.cursor++
+				m.status = ""
+			}
+		case "pgup":
+			if m.mode == readerView {
+				m.readerOffset = max(0, m.readerOffset-m.readerPageSize())
+				m.status = ""
+			}
+		case "pgdown":
+			if m.mode == readerView {
+				m.readerOffset = min(m.maxReaderOffset(), m.readerOffset+m.readerPageSize())
+				m.status = ""
+			}
+		case "home":
+			if m.mode == readerView {
+				m.readerOffset = 0
+				m.status = ""
+			}
+		case "end":
+			if m.mode == readerView {
+				m.readerOffset = m.maxReaderOffset()
 				m.status = ""
 			}
 		case "enter":
 			if m.mode == inboxView && len(m.messages) > 0 {
-				m.mode = readerView
-				m.messages[m.cursor].Unread = false
-				m.status = ""
+				return m.openSelectedMessage()
 			}
 		case "b", "esc":
 			if m.mode == readerView {
@@ -542,6 +587,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			m.loadingMore = false
 			m.loadedAll = false
+			m.loadingMessageID = ""
+			m.readerOffset = 0
 			m.loadSerial++
 			m.status = "refreshing " + m.mailboxLabel() + "..."
 			return m, m.loadInbox()
@@ -806,6 +853,39 @@ func (m model) loadInboxPage(page, serial int) tea.Cmd {
 	return func() tea.Msg {
 		messages, done, err := backend.ListEnvelopePage(context.Background(), page)
 		return inboxPageLoadedMsg{messages: messages, page: page, serial: serial, done: done, err: err}
+	}
+}
+
+func (m model) openSelectedMessage() (model, tea.Cmd) {
+	if len(m.messages) == 0 {
+		return m.withStatus("No email selected"), nil
+	}
+
+	index := min(m.cursor, len(m.messages)-1)
+	m.mode = readerView
+	m.readerOffset = 0
+	m.messages[index].Unread = false
+	msg := m.messages[index]
+	if messageBodyReady(msg) {
+		return m.withStatus(""), nil
+	}
+
+	backend, ok := m.backend.(messageBodyBackend)
+	if !ok {
+		m.messages[index].BodyError = "This backend cannot load full emails yet."
+		return m.withStatus("email body is not available yet"), nil
+	}
+
+	m.messageLoadSerial++
+	m.loadingMessageID = msg.ID
+	m.messages[index].BodyError = ""
+	return m.withStatus("Loading email..."), m.loadMessageBody(backend, msg, m.messageLoadSerial)
+}
+
+func (m model) loadMessageBody(backend messageBodyBackend, msg message, serial int) tea.Cmd {
+	return func() tea.Msg {
+		body, err := backend.ReadMessage(context.Background(), msg)
+		return messageBodyLoadedMsg{id: msg.ID, body: body, serial: serial, err: err}
 	}
 }
 
@@ -1147,10 +1227,6 @@ func (m model) renderMessage(width, height int, includePreview bool) string {
 	}
 
 	msg := m.selectedMessage()
-	body := msg.Body
-	if includePreview && strings.TrimSpace(msg.Preview) != "" {
-		body = msg.Preview + "\n\n" + body
-	}
 	lines := []string{
 		styles.panelTitle.Render("Reader"),
 		styles.readerHeader.Width(width).Render("From: " + msg.From + " <" + msg.Email + ">"),
@@ -1158,7 +1234,18 @@ func (m model) renderMessage(width, height int, includePreview bool) string {
 		styles.readerHeader.Width(width).Render("Date: " + msg.Date),
 		styles.readerBody.Width(width).Render(""),
 	}
-	lines = append(lines, styledLines(wrapText(body, width-2), styles.readerBody, width)...)
+
+	bodyLines := wrapText(m.messageBodyText(msg, includePreview), width-2)
+	if !includePreview {
+		bodyHeight := max(1, height-len(lines))
+		offset := min(m.readerOffset, max(0, len(bodyLines)-bodyHeight))
+		end := min(len(bodyLines), offset+bodyHeight)
+		if offset > 0 || end < len(bodyLines) {
+			lines[0] = styles.panelTitle.Render(fmt.Sprintf("Reader  %d-%d/%d", min(offset+1, len(bodyLines)), end, len(bodyLines)))
+		}
+		bodyLines = bodyLines[offset:end]
+	}
+	lines = append(lines, styledLines(bodyLines, styles.readerBody, width)...)
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
 
@@ -1167,7 +1254,7 @@ func (m model) renderFooter() string {
 	themeHint := fmt.Sprintf("theme %s: t themes", m.activeTheme().name)
 	hints := themeHint + "  |  j/k move  enter read  R refresh  A account  r reply  c compose  a archive  / search  ? help  q quit"
 	if m.mode == readerView {
-		hints = themeHint + "  |  b back  r reply  a archive  d delete  ? help  q back"
+		hints = themeHint + "  |  j/k scroll  b back  r reply  a archive  d delete  ? help  q back"
 	} else if m.mode == setupView {
 		hints = m.setupFooterHints()
 	}
@@ -1198,8 +1285,10 @@ func (m model) overlayHelp(content string) string {
 		"",
 		"Theme      " + m.activeTheme().name,
 		"",
-		"j / k      move down / up",
+		"j / k      move in inbox",
 		"Enter      open selected email",
+		"j / k      scroll in reader",
+		"PgUp/PgDn  jump in reader",
 		"b / Esc    back to inbox",
 		"r          reply in $EDITOR (planned)",
 		"c          compose in $EDITOR (planned)",
@@ -1301,6 +1390,69 @@ func (m model) selectedMessage() message {
 		return message{}
 	}
 	return m.messages[min(m.cursor, len(m.messages)-1)]
+}
+
+func (m model) setMessageBody(id, body string) model {
+	for i := range m.messages {
+		if m.messages[i].ID == id {
+			m.messages[i].Body = body
+			m.messages[i].BodyLoaded = true
+			m.messages[i].BodyError = ""
+			break
+		}
+	}
+	return m
+}
+
+func (m model) setMessageBodyError(id, message string) model {
+	for i := range m.messages {
+		if m.messages[i].ID == id {
+			m.messages[i].Body = ""
+			m.messages[i].BodyLoaded = false
+			m.messages[i].BodyError = message
+			break
+		}
+	}
+	return m
+}
+
+func (m model) messageBodyText(msg message, includePreview bool) string {
+	var parts []string
+	if includePreview && strings.TrimSpace(msg.Preview) != "" {
+		parts = append(parts, msg.Preview)
+	}
+
+	switch {
+	case m.loadingMessageID != "" && m.loadingMessageID == msg.ID:
+		parts = append(parts, "Loading email...")
+	case strings.TrimSpace(msg.BodyError) != "":
+		parts = append(parts, "Could not load this email: "+msg.BodyError)
+	case messageBodyReady(msg):
+		parts = append(parts, msg.Body)
+	case includePreview:
+		parts = append(parts, "Press Enter to read this email.")
+	default:
+		parts = append(parts, "Loading email...")
+	}
+
+	return strings.Join(parts, "\n\n")
+}
+
+func (m model) maxReaderOffset() int {
+	if m.mode != readerView || len(m.messages) == 0 {
+		return 0
+	}
+	bodyHeight := m.readerPageSize()
+	lines := wrapText(m.messageBodyText(m.selectedMessage(), false), max(16, m.width-2))
+	return max(0, len(lines)-bodyHeight)
+}
+
+func (m model) readerPageSize() int {
+	return max(1, m.height-7)
+}
+
+func messageBodyReady(msg message) bool {
+	return msg.BodyLoaded || strings.TrimSpace(msg.Body) != ""
 }
 
 func (m model) withStatus(text string) model {

@@ -23,6 +23,10 @@ type pagedInboxBackend interface {
 	ListEnvelopePage(context.Context, int) ([]message, bool, error)
 }
 
+type messageBodyBackend interface {
+	ReadMessage(context.Context, message) (string, error)
+}
+
 type accountSetupBackend interface {
 	SaveAccountSetup(accountSetup) error
 	WithAccount(account string) inboxBackend
@@ -127,6 +131,38 @@ func (h himalayaBackend) ListEnvelopePage(ctx context.Context, page int) ([]mess
 	return nil, false, describeHimalayaFailure(last)
 }
 
+func (h himalayaBackend) ReadMessage(ctx context.Context, msg message) (string, error) {
+	if h.runner == nil {
+		h.runner = osCommandRunner{}
+	}
+
+	id := strings.TrimSpace(msg.ID)
+	if id == "" {
+		return "", errors.New("email has no readable id")
+	}
+
+	var last commandFailure
+	for _, args := range h.readCandidates(id) {
+		stdout, stderr, err := h.runner.Run(ctx, h.binary, args)
+		if err == nil {
+			body := normalizeMessageBody(stdout)
+			if body == "" {
+				body = "(empty message)"
+			}
+			return body, nil
+		}
+
+		last = commandFailure{program: h.binary, args: args, stdout: stdout, stderr: stderr, err: err}
+		if isMissingExecutable(err) {
+			return "", describeHimalayaFailure(last)
+		}
+		if !looksLikeCommandShapeError(last.output()) {
+			return "", describeHimalayaFailure(last)
+		}
+	}
+	return "", describeHimalayaFailure(last)
+}
+
 func (h himalayaBackend) listCandidates(page int) [][]string {
 	pageNumber := strconv.Itoa(page)
 	v1 := []string{"envelope", "list", "--output", "json", "--page", pageNumber}
@@ -138,6 +174,22 @@ func (h himalayaBackend) listCandidates(page int) [][]string {
 	}
 	v1 = appendFlags(v1, "--account", h.account, "--folder", h.mailbox)
 	v2 = appendFlags(v2, "--account", h.account, "--mailbox", h.mailbox)
+	return [][]string{v1, v2}
+}
+
+func (h himalayaBackend) readCandidates(id string) [][]string {
+	v1 := appendFlags([]string{"message", "read", "--no-headers"}, "--account", h.account, "--folder", h.mailbox)
+	v1 = append(v1, id)
+
+	v2 := []string{"messages", "read", "--no-headers"}
+	if strings.TrimSpace(h.account) != "" {
+		v2 = append(v2, "-a", h.account)
+	}
+	if strings.TrimSpace(h.mailbox) != "" {
+		v2 = append(v2, "-m", h.mailbox)
+	}
+	v2 = append(v2, id)
+
 	return [][]string{v1, v2}
 }
 
@@ -196,9 +248,14 @@ func messageFromEnvelope(envelope map[string]any, fallbackID int) message {
 		Subject: firstNonEmpty(text(envelope, "subject"), "(no subject)"),
 		Date:    text(envelope, "date", "sent_at", "sentAt", "received_at", "receivedAt"),
 		Preview: preview,
-		Body:    "Message body loading arrives in Phase 3.",
 		Unread:  isUnread(flags),
 	}
+}
+
+func normalizeMessageBody(data []byte) string {
+	body := strings.ReplaceAll(string(data), "\r\n", "\n")
+	body = strings.ReplaceAll(body, "\r", "\n")
+	return strings.TrimSpace(body)
 }
 
 func envelopeObjects(raw any) []map[string]any {

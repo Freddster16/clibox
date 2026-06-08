@@ -42,6 +42,79 @@ func TestOpenReaderAndBack(t *testing.T) {
 	}
 }
 
+func TestOpenReaderLoadsBodyAndCachesIt(t *testing.T) {
+	backend := &bodyBackend{body: "Hey Freddy,\n\nThe build passed."}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = testMessages()
+	m.messages[0].Body = ""
+	m.messages[0].BodyLoaded = false
+	m.loading = false
+
+	next, cmd := m.Update(keyMsg("enter"))
+	updated := next.(model)
+	if updated.mode != readerView {
+		t.Fatalf("expected reader view, got %v", updated.mode)
+	}
+	if cmd == nil {
+		t.Fatal("expected opening an unloaded message to fetch its body")
+	}
+	if updated.status != "Loading email..." {
+		t.Fatalf("expected loading status, got %q", updated.status)
+	}
+
+	loaded := cmd().(messageBodyLoadedMsg)
+	next, _ = updated.Update(loaded)
+	updated = next.(model)
+	if !updated.messages[0].BodyLoaded {
+		t.Fatal("expected message body to be cached")
+	}
+	if updated.messages[0].Body != "Hey Freddy,\n\nThe build passed." {
+		t.Fatalf("unexpected loaded body: %q", updated.messages[0].Body)
+	}
+	if backend.reads != 1 {
+		t.Fatalf("expected one backend read, got %d", backend.reads)
+	}
+
+	updated = pressKey(t, updated, "b")
+	next, cmd = updated.Update(keyMsg("enter"))
+	updated = next.(model)
+	if cmd != nil {
+		t.Fatal("expected cached body to reopen without another fetch")
+	}
+	if backend.reads != 1 {
+		t.Fatalf("expected cached reopen to avoid backend read, got %d", backend.reads)
+	}
+}
+
+func TestReaderScrollsBody(t *testing.T) {
+	m := newTestModel()
+	m.mode = readerView
+	m.width = 80
+	m.height = 12
+	m.messages[0].Body = strings.Repeat("long line with enough words to wrap neatly\n", 40)
+	m.messages[0].BodyLoaded = true
+
+	m = pressKey(t, m, "j")
+	if m.readerOffset != 1 {
+		t.Fatalf("expected j to scroll reader to offset 1, got %d", m.readerOffset)
+	}
+
+	m = pressKey(t, m, "pgdown")
+	if m.readerOffset <= 1 {
+		t.Fatalf("expected pgdown to jump farther through the reader, got %d", m.readerOffset)
+	}
+
+	m = pressKey(t, m, "end")
+	if m.readerOffset != m.maxReaderOffset() {
+		t.Fatalf("expected end to jump to bottom, got %d of %d", m.readerOffset, m.maxReaderOffset())
+	}
+
+	m = pressKey(t, m, "home")
+	if m.readerOffset != 0 {
+		t.Fatalf("expected home to return to top, got %d", m.readerOffset)
+	}
+}
+
 func TestHelpOverlayConsumesNavigation(t *testing.T) {
 	m := newTestModel()
 
@@ -569,26 +642,46 @@ func newTestModel() model {
 func testMessages() []message {
 	return []message{
 		{
-			ID:      "1",
-			From:    "Alice",
-			Email:   "alice@example.com",
-			Subject: "Re: Design notes",
-			Date:    "10:34 AM",
-			Preview: "I looked at the prototype.",
-			Body:    "Hey Freddy,\n\nI looked at the prototype and left notes.",
-			Unread:  true,
+			ID:         "1",
+			From:       "Alice",
+			Email:      "alice@example.com",
+			Subject:    "Re: Design notes",
+			Date:       "10:34 AM",
+			Preview:    "I looked at the prototype.",
+			Body:       "Hey Freddy,\n\nI looked at the prototype and left notes.",
+			BodyLoaded: true,
+			Unread:     true,
 		},
 		{
-			ID:      "2",
-			From:    "GitHub",
-			Email:   "notifications@github.com",
-			Subject: "New issue assigned",
-			Date:    "Yesterday",
-			Preview: "You were assigned issue #42.",
-			Body:    "You were assigned issue #42 in Freddster16/clibox.",
-			Unread:  true,
+			ID:         "2",
+			From:       "GitHub",
+			Email:      "notifications@github.com",
+			Subject:    "New issue assigned",
+			Date:       "Yesterday",
+			Preview:    "You were assigned issue #42.",
+			Body:       "You were assigned issue #42 in Freddster16/clibox.",
+			BodyLoaded: true,
+			Unread:     true,
 		},
 	}
+}
+
+type bodyBackend struct {
+	body  string
+	reads int
+}
+
+func (b *bodyBackend) ListEnvelopes(context.Context) ([]message, error) {
+	return testMessages(), nil
+}
+
+func (b *bodyBackend) ReadMessage(context.Context, message) (string, error) {
+	b.reads++
+	return b.body, nil
+}
+
+func (b *bodyBackend) Label() string {
+	return "body fake"
 }
 
 type configurableBackend struct {
@@ -654,6 +747,14 @@ func keyMsg(key string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyCtrlO}
 	case "ctrl+u":
 		return tea.KeyMsg{Type: tea.KeyCtrlU}
+	case "pgup":
+		return tea.KeyMsg{Type: tea.KeyPgUp}
+	case "pgdown":
+		return tea.KeyMsg{Type: tea.KeyPgDown}
+	case "home":
+		return tea.KeyMsg{Type: tea.KeyHome}
+	case "end":
+		return tea.KeyMsg{Type: tea.KeyEnd}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	}
