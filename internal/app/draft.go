@@ -97,8 +97,8 @@ func removeDraftFile(path string) {
 	}
 }
 
-func draftEditorCommand(path string) (*exec.Cmd, error) {
-	editor := firstNonEmpty(os.Getenv("CLIBOX_EDITOR"), os.Getenv("VISUAL"), os.Getenv("EDITOR"), "nvim")
+func draftEditorCommand(path, configuredEditor string) (*exec.Cmd, error) {
+	editor := firstNonEmpty(configuredEditor, os.Getenv("CLIBOX_EDITOR"), os.Getenv("VISUAL"), os.Getenv("EDITOR"), "nvim")
 	parts := strings.Fields(editor)
 	if len(parts) == 0 {
 		return nil, errors.New("no editor configured")

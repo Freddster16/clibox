@@ -38,6 +38,28 @@ func TestBuildHimalayaAccountBlockUsesBackendConfig(t *testing.T) {
 	}
 }
 
+func TestMacOSCredentialArgsDoNotExposeSecret(t *testing.T) {
+	setup := accountSetup{Account: "gmail", Email: "person@gmail.com", Secret: "abcd efgh ijkl mnop"}
+	args := strings.Join(macOSKeychainAddArgs(setup, credentialServiceName(setup)), " ")
+	if strings.Contains(args, setup.Secret) {
+		t.Fatalf("secret leaked into macOS Keychain argv: %q", args)
+	}
+	if !strings.HasSuffix(args, " -w") {
+		t.Fatalf("expected -w prompt flag at the end, got %q", args)
+	}
+}
+
+func TestSecretToolCredentialArgsDoNotExposeSecret(t *testing.T) {
+	setup := accountSetup{Account: "work", Email: "person@example.com", Secret: "private-password"}
+	args := strings.Join(secretToolStoreArgs(setup, credentialServiceName(setup)), " ")
+	if strings.Contains(args, setup.Secret) {
+		t.Fatalf("secret leaked into secret-tool argv: %q", args)
+	}
+	if !strings.Contains(secretToolLookupCommand(setup, credentialServiceName(setup)), "secret-tool lookup") {
+		t.Fatalf("expected secret-tool lookup command")
+	}
+}
+
 func TestBuildHimalayaAccountBlockOmitsPageSizeWhenUnset(t *testing.T) {
 	setup := accountSetup{
 		Account:     "gmail",

@@ -25,13 +25,14 @@ delete confirmation, and mailbox search now work from the TUI.
   reader with `j/k`, `PgUp/PgDn`, `Home`, and `End`.
 - Starts setup with one email address, detects common providers, configures the
   mail connection in the background, and saves the password/app password to
-  macOS Keychain.
+  the OS credential store.
 - Composes new email with `c`, replies from the reader with `r`, opens
   `$EDITOR`, then returns to a review screen where `s` sends and `e` edits
   again.
 - Archives selected email with `a`, moves selected email to Trash after `d` + `y`,
   and searches the current mailbox with `/`.
 - Supports `--account`, `--mailbox`, and advanced backend tuning flags.
+- Reads optional local preferences from `~/.config/clibox/config.toml`.
 - Refreshes the envelope list with `R`.
 - Provides `clibox doctor` for setup checks before opening the TUI.
 
@@ -70,12 +71,13 @@ Real email requires the bundled email backend for inbox data. If the backend is
 missing or setup is not finished, `clibox` shows a friendly setup prompt instead
 of crashing. If an account is needed, `clibox` asks for your email address once,
 detects the provider, chooses known IMAP/SMTP settings, asks for the required
-password or app password, stores the secret in macOS Keychain, and reloads your
-inbox.
+password or app password, stores the secret in the OS credential store, and
+reloads your inbox.
 
-Automatic secret storage is macOS-first right now. On other platforms, manual
-backend setup is still available until `clibox` grows a portable secret-store
-adapter.
+Automatic secret storage uses macOS Keychain on macOS and `secret-tool`
+(`libsecret`) on Linux when it is available. On other platforms, manual backend
+setup is still available. A raw-password fallback exists only behind the
+explicit `CLIBOX_ALLOW_RAW_PASSWORD=1` escape hatch.
 
 If you already installed `clibox` and want the latest UI changes:
 
@@ -153,11 +155,12 @@ clibox
 # screen / Ctrl+O on the password screen to open it in your browser.
 
 # 4. Press Enter on the review screen, then paste the password/app password.
-# clibox configures the mail connection and saves the secret to Keychain.
+# clibox configures the mail connection and saves the secret to the OS credential store.
 
 # 5. Optionally choose account or mailbox at launch after setup exists.
 clibox --account personal
 clibox --mailbox INBOX
+clibox --config ~/.config/clibox/config.toml
 clibox --archive-folder Archive
 
 # 6. Reply or compose from the TUI. clibox opens CLIBOX_EDITOR, VISUAL,
@@ -199,7 +202,9 @@ Useful launch flags:
 ```sh
 clibox --account personal --mailbox INBOX
 clibox --backend /path/to/backend
+clibox --editor "nvim"
 clibox --page-size 50
+clibox --confirm-delete=false
 clibox --archive-folder "[Gmail]/All Mail"
 clibox doctor --account personal --mailbox INBOX
 ```
@@ -247,6 +252,9 @@ Check the email setup without opening the full-screen TUI:
 go run . doctor
 ```
 
+`clibox doctor` checks the backend version, config path, account, mailbox, and
+the newest mailbox page. It does not download the full mailbox.
+
 Run the verification suite:
 
 ```sh
@@ -258,7 +266,7 @@ Production code no longer carries a fake inbox. Test fixtures live in the test
 suite, while the app itself starts by loading envelopes from the configured
 email backend.
 
-## Planned interface
+## Configuration
 
 Config path:
 
@@ -275,6 +283,9 @@ archive_folder = "Archive"
 editor = "nvim"
 confirm_delete = true
 ```
+
+The same path can be overridden with `CLIBOX_CONFIG` or `--config`.
+Command-line flags override config values for that launch.
 
 Default keymap:
 
@@ -316,13 +327,14 @@ Build `clibox` in Go:
 - Backend: a Himalaya adapter that calls the CLI and parses JSON where
   available.
 - Account setup: provider detection plus generated Himalaya config for common
-  IMAP/SMTP providers, with secrets stored in macOS Keychain.
+  IMAP/SMTP providers, with secrets stored in macOS Keychain or Linux
+  `secret-tool`.
 - Drafts: create temporary owner-only draft files, open `CLIBOX_EDITOR`,
   `VISUAL`, `EDITOR`, or `nvim`, show a review step after the editor exits, and
   send through Himalaya over stdin.
 - Inbox actions: archive and delete through the backend adapter, plus
   plain-language search translated into the backend's query DSL.
-- Planned app config: TOML at `~/.config/clibox/config.toml`; current account
+- App config: TOML at `~/.config/clibox/config.toml`; current account
   connection details live in the backend config generated during setup.
 
 The Himalaya command surface differs between released and in-development

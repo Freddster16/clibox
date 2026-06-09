@@ -228,6 +228,30 @@ func TestDeleteRequiresConfirmation(t *testing.T) {
 	}
 }
 
+func TestDeleteCanSkipConfirmation(t *testing.T) {
+	backend := &actionFlowBackend{}
+	confirmDelete := false
+	m := NewWithOptions(Options{backend: backend, ConfirmDelete: &confirmDelete})
+	m.messages = testMessages()
+	m.loading = false
+
+	next, cmd := m.Update(keyMsg("d"))
+	updated := next.(model)
+	if updated.confirmDelete {
+		t.Fatal("expected delete confirmation to be skipped")
+	}
+	if cmd == nil || !updated.action.Running {
+		t.Fatal("expected delete to start immediately")
+	}
+}
+
+func TestConfiguredEditorLabelWins(t *testing.T) {
+	m := NewWithOptions(Options{Editor: "nano"})
+	if got := m.editorLabel(); got != "nano" {
+		t.Fatalf("expected configured editor, got %q", got)
+	}
+}
+
 func TestSearchPromptLoadsSearchResults(t *testing.T) {
 	backend := &actionFlowBackend{
 		searchMessages: []message{{ID: "9", From: "Alice", Subject: "Deploy"}},

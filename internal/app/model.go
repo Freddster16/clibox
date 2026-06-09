@@ -24,7 +24,9 @@ type Options struct {
 	Mailbox       string
 	ArchiveFolder string
 	Himalaya      string
+	Editor        string
 	PageSize      int
+	ConfirmDelete *bool
 	backend       inboxBackend
 }
 
@@ -116,6 +118,8 @@ type model struct {
 	confirmDelete     bool
 	action            messageActionState
 	actionSerial      int
+	deletePrompt      bool
+	editor            string
 	width             int
 	height            int
 }
@@ -153,6 +157,10 @@ func NewWithOptions(options Options) model {
 	setupEmail := strings.TrimSpace(hint.Email)
 	setupAccount := firstNonEmpty(options.Account, hint.Account, "personal")
 	setupProvider := hint.Provider
+	deletePrompt := true
+	if options.ConfirmDelete != nil {
+		deletePrompt = *options.ConfirmDelete
+	}
 
 	return model{
 		backend:           backend,
@@ -167,6 +175,8 @@ func NewWithOptions(options Options) model {
 		theme:             index,
 		themeCursor:       index,
 		themeBeforePicker: index,
+		deletePrompt:      deletePrompt,
+		editor:            strings.TrimSpace(options.Editor),
 	}
 }
 
@@ -579,7 +589,7 @@ func (m model) prepareDraft(backend draftBackend, request draftRequest, serial i
 func (m model) openDraftEditor() tea.Cmd {
 	path := m.draft.Path
 	serial := m.draft.Serial
-	cmd, err := draftEditorCommand(path)
+	cmd, err := draftEditorCommand(path, m.editor)
 	if err != nil {
 		return func() tea.Msg {
 			return draftEditorFinishedMsg{path: path, serial: serial, err: err}
@@ -827,5 +837,5 @@ func (m model) inboxTitle() string {
 }
 
 func (m model) editorLabel() string {
-	return firstNonEmpty(os.Getenv("CLIBOX_EDITOR"), os.Getenv("VISUAL"), os.Getenv("EDITOR"), "nvim")
+	return firstNonEmpty(m.editor, os.Getenv("CLIBOX_EDITOR"), os.Getenv("VISUAL"), os.Getenv("EDITOR"), "nvim")
 }

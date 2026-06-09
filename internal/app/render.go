@@ -181,9 +181,9 @@ func (m model) renderSetupSecret(width, height int) string {
 		styles.readerHeader.Width(width).Render("Account name: " + m.setupAccount),
 		"",
 	}
-	prompt := "Paste your " + provider.secretLabel() + ". clibox will save it to macOS Keychain, configure your mail connection, and reload your inbox."
+	prompt := "Paste your " + provider.secretLabel() + ". clibox will save it to your OS credential store, configure your mail connection, and reload your inbox."
 	if provider.Name == "Gmail" {
-		prompt = "Paste the 16-character Google app password, not your Gmail address or normal Google password. clibox will save it to macOS Keychain, configure your mail connection, and reload your inbox."
+		prompt = "Paste the 16-character Google app password, not your Gmail address or normal Google password. clibox will save it to your OS credential store, configure your mail connection, and reload your inbox."
 	}
 	lines = append(lines, styledLines(wrapText(prompt, width-2), styles.readerBody, width)...)
 	if provider.HelpURL != "" {

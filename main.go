@@ -13,24 +13,33 @@ import (
 
 func main() {
 	flags := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	configPath := flags.String("config", "", "path to clibox config file")
 	theme := flags.String("theme", "", "start clibox with a theme: nocturne, ember, or lagoon")
 	account := flags.String("account", "", "email account name to read")
-	mailbox := flags.String("mailbox", "INBOX", "mailbox/folder to read")
+	mailbox := flags.String("mailbox", "", "mailbox/folder to read")
 	archiveFolder := flags.String("archive-folder", "", "advanced: mailbox/folder to move archived messages into")
 	backendBinary := flags.String("backend", "", "advanced: path to the email backend binary")
+	editor := flags.String("editor", "", "editor command for compose and reply drafts")
 	himalaya := flags.String("himalaya", "", "deprecated alias for --backend")
 	pageSize := flags.Int("page-size", 0, "advanced: envelopes to request per page; 0 loads all pages with backend defaults")
+	confirmDelete := flags.Bool("confirm-delete", true, "ask before moving messages to Trash")
 	showThemes := flags.Bool("themes", false, "list available themes")
 	flags.Usage = func() {
-		fmt.Fprintf(flags.Output(), "Usage: %s [doctor] [--theme name] [--account name] [--mailbox name] [--archive-folder name] [--themes]\n\n", os.Args[0])
+		fmt.Fprintf(flags.Output(), "Usage: %s [doctor] [--config path] [--theme name] [--account name] [--mailbox name] [--archive-folder name] [--themes]\n\n", os.Args[0])
 		fmt.Fprintln(flags.Output(), "  -account string")
 		fmt.Fprintln(flags.Output(), "    \temail account name to read")
 		fmt.Fprintln(flags.Output(), "  -archive-folder string")
 		fmt.Fprintln(flags.Output(), "    \tadvanced: mailbox/folder to move archived messages into")
 		fmt.Fprintln(flags.Output(), "  -backend string")
 		fmt.Fprintln(flags.Output(), "    \tadvanced: path to the email backend binary")
+		fmt.Fprintln(flags.Output(), "  -config string")
+		fmt.Fprintln(flags.Output(), "    \tpath to clibox config file")
+		fmt.Fprintln(flags.Output(), "  -confirm-delete")
+		fmt.Fprintln(flags.Output(), "    \task before moving messages to Trash (default true)")
+		fmt.Fprintln(flags.Output(), "  -editor string")
+		fmt.Fprintln(flags.Output(), "    \teditor command for compose and reply drafts")
 		fmt.Fprintln(flags.Output(), "  -mailbox string")
-		fmt.Fprintln(flags.Output(), "    \tmailbox/folder to read (default \"INBOX\")")
+		fmt.Fprintln(flags.Output(), "    \tmailbox/folder to read")
 		fmt.Fprintln(flags.Output(), "  -page-size int")
 		fmt.Fprintln(flags.Output(), "    \tadvanced: envelopes to request per page; 0 loads all pages with backend defaults")
 		fmt.Fprintln(flags.Output(), "  -theme string")
@@ -49,18 +58,51 @@ func main() {
 	if err := flags.Parse(args); err != nil {
 		os.Exit(2)
 	}
+	visited := visitedFlags(flags)
 	if *showThemes {
 		fmt.Fprint(os.Stdout, app.ThemeHelp())
 		return
 	}
 
+	config, _, err := app.LoadConfig(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "clibox config failed: %v\n", err)
+		os.Exit(2)
+	}
 	options := app.Options{
-		Theme:         *theme,
-		Account:       *account,
-		Mailbox:       *mailbox,
-		ArchiveFolder: *archiveFolder,
-		Himalaya:      firstNonEmpty(*backendBinary, *himalaya),
-		PageSize:      *pageSize,
+		Theme:         config.Theme,
+		Account:       config.Account,
+		Mailbox:       config.Mailbox,
+		ArchiveFolder: config.ArchiveFolder,
+		Himalaya:      config.Backend,
+		Editor:        config.Editor,
+		PageSize:      config.PageSize,
+		ConfirmDelete: config.ConfirmDelete,
+	}
+	if visited["theme"] {
+		options.Theme = *theme
+	}
+	if visited["account"] {
+		options.Account = *account
+	}
+	if visited["mailbox"] {
+		options.Mailbox = *mailbox
+	}
+	if visited["archive-folder"] {
+		options.ArchiveFolder = *archiveFolder
+	}
+	if visited["backend"] || visited["himalaya"] {
+		options.Himalaya = firstNonEmpty(*backendBinary, *himalaya)
+	}
+	if visited["editor"] {
+		options.Editor = *editor
+	}
+	if visited["page-size"] {
+		options.PageSize = *pageSize
+	}
+	if visited["confirm-delete"] {
+		value := *confirmDelete
+		options.ConfirmDelete = &value
 	}
 	if doctor {
 		report, err := app.Doctor(context.Background(), options)
@@ -77,6 +119,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "clibox failed: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func visitedFlags(flags *flag.FlagSet) map[string]bool {
+	visited := map[string]bool{}
+	flags.Visit(func(flag *flag.Flag) {
+		visited[flag.Name] = true
+	})
+	return visited
 }
 
 func firstNonEmpty(values ...string) string {

@@ -209,6 +209,43 @@ func TestHimalayaBackendOmitsPageSizeWhenUnset(t *testing.T) {
 	}
 }
 
+func TestHimalayaDoctorChecksOnePage(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stdout: []byte("himalaya 1.2.0\n"),
+		},
+		{
+			stdout: []byte(`[
+				{"id":"1","subject":"One","from":"Alice <alice@example.com>"},
+				{"id":"2","subject":"Two","from":"Bob <bob@example.com>"}
+			]`),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:   "himalaya",
+		account:  "personal",
+		mailbox:  "INBOX",
+		pageSize: 2,
+		runner:   runner,
+	}
+
+	report, err := backend.Diagnose(context.Background())
+	if err != nil {
+		t.Fatalf("expected doctor to succeed: %v", err)
+	}
+	for _, want := range []string{"Email connection OK", "Backend: himalaya 1.2.0", "Account: personal", "Mailbox: INBOX", "First page: 2 emails"} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("expected doctor report to contain %q, got:\n%s", want, report)
+		}
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected version plus one page call, got %v", runner.calls)
+	}
+	if strings.Contains(strings.Join(runner.calls, "\n"), "--page 2") {
+		t.Fatalf("doctor should not load older pages, got calls: %v", runner.calls)
+	}
+}
+
 func TestHimalayaBackendSearchesEnvelopePages(t *testing.T) {
 	runner := &fakeCommandRunner{results: []fakeCommandResult{
 		{

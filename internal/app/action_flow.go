@@ -71,6 +71,9 @@ func (m model) askDeleteConfirmation() (model, tea.Cmd) {
 	if strings.TrimSpace(msg.ID) == "" {
 		return m.withStatus("selected email has no backend id"), nil
 	}
+	if !m.deletePrompt {
+		return m.startMessageAction(deleteAction)
+	}
 	m.confirmDelete = true
 	m.action = messageActionState{Kind: deleteAction, Message: msg, Index: index}
 	return m.withStatus("Move to Trash? y confirms, n cancels: " + selectedMessageLabel(msg)), nil

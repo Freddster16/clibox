@@ -73,12 +73,67 @@ type commandFailure struct {
 }
 
 func Doctor(ctx context.Context, options Options) (string, error) {
+	if options.backend != nil {
+		messages, err := options.backend.ListEnvelopes(ctx)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Email connection OK: loaded %d emails from %s", len(messages), options.backend.Label()), nil
+	}
+
 	backend := newHimalayaBackend(options)
-	messages, err := backend.ListEnvelopes(ctx)
+	return backend.Diagnose(ctx)
+}
+
+func (h himalayaBackend) Diagnose(ctx context.Context) (string, error) {
+	if h.runner == nil {
+		h.runner = osCommandRunner{}
+	}
+
+	version := "unknown"
+	stdout, stderr, err := h.runner.Run(ctx, h.binary, []string{"--version"})
+	if err != nil {
+		failure := commandFailure{program: h.binary, args: []string{"--version"}, stdout: stdout, stderr: stderr, err: err}
+		if isMissingExecutable(err) {
+			return "", describeHimalayaFailure(failure)
+		}
+		version = "unknown (" + oneLine(firstNonEmpty(failure.output(), err.Error())) + ")"
+	} else {
+		version = oneLine(firstNonEmpty(string(stdout), string(stderr), h.binary))
+	}
+
+	configPath, configErr := himalayaConfigPath()
+	configLabel := "unknown"
+	if configErr != nil {
+		configLabel = "unavailable: " + oneLine(configErr.Error())
+	} else {
+		configLabel = configPath
+	}
+
+	account := h.account
+	if hint, ok := himalayaAccountHint(h.account); ok {
+		account = firstNonEmpty(account, hint.Account)
+	}
+	account = firstNonEmpty(account, "default")
+
+	messages, done, err := h.ListEnvelopePage(ctx, 1)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Email connection OK: loaded %d emails from %s", len(messages), backend.Label()), nil
+	older := ""
+	if !done {
+		older = " (older mail may still be available)"
+	}
+
+	lines := []string{
+		"Email connection OK",
+		"Backend: " + version,
+		"Config: " + configLabel,
+		"Account: " + account,
+		"Mailbox: " + h.mailbox,
+		fmt.Sprintf("First page: %d emails%s", len(messages), older),
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 func newHimalayaBackend(options Options) himalayaBackend {

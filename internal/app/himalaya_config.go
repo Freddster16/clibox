@@ -63,19 +63,61 @@ func (h himalayaBackend) SaveAccountSetup(setup accountSetup) error {
 
 func saveCredential(setup accountSetup) (credentialRef, error) {
 	service := credentialServiceName(setup)
-	if runtime.GOOS == "darwin" {
-		cmd := exec.Command("security", "add-generic-password", "-a", setup.Email, "-s", service, "-w", setup.Secret, "-U") // #nosec G204 -- fixed macOS Keychain command; arguments are not shell-evaluated.
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return credentialRef{}, fmt.Errorf("could not save password to macOS Keychain: %s", oneLine(firstNonEmpty(string(output), err.Error())))
+	switch runtime.GOOS {
+	case "darwin":
+		return saveMacOSCredential(setup, service)
+	case "linux":
+		if _, err := exec.LookPath("secret-tool"); err == nil {
+			return saveSecretToolCredential(setup, service)
 		}
-		return credentialRef{Command: "security find-generic-password -a " + shellQuote(setup.Email) + " -s " + shellQuote(service) + " -w"}, nil
 	}
 
 	if os.Getenv("CLIBOX_ALLOW_RAW_PASSWORD") == "1" {
 		return credentialRef{Raw: setup.Secret}, nil
 	}
 
-	return credentialRef{}, errors.New("automatic secure password storage currently uses macOS Keychain; set CLIBOX_ALLOW_RAW_PASSWORD=1 to write the password into Himalaya config on this platform")
+	return credentialRef{}, errors.New("automatic secure password storage needs macOS Keychain or Linux secret-tool; install a supported credential store or set CLIBOX_ALLOW_RAW_PASSWORD=1 to write the password into Himalaya config")
+}
+
+func saveMacOSCredential(setup accountSetup, service string) (credentialRef, error) {
+	args := macOSKeychainAddArgs(setup, service)
+	if output, err := runCredentialCommand("security", args, setup.Secret+"\n"); err != nil {
+		return credentialRef{}, fmt.Errorf("could not save password to macOS Keychain: %s", oneLine(firstNonEmpty(string(output), err.Error())))
+	}
+	return credentialRef{Command: macOSKeychainFindCommand(setup, service)}, nil
+}
+
+func macOSKeychainAddArgs(setup accountSetup, service string) []string {
+	return []string{"add-generic-password", "-a", setup.Email, "-s", service, "-U", "-w"}
+}
+
+func macOSKeychainFindCommand(setup accountSetup, service string) string {
+	return "security find-generic-password -a " + shellQuote(setup.Email) + " -s " + shellQuote(service) + " -w"
+}
+
+func saveSecretToolCredential(setup accountSetup, service string) (credentialRef, error) {
+	args := secretToolStoreArgs(setup, service)
+	if output, err := runCredentialCommand("secret-tool", args, setup.Secret+"\n"); err != nil {
+		return credentialRef{}, fmt.Errorf("could not save password with secret-tool: %s", oneLine(firstNonEmpty(string(output), err.Error())))
+	}
+	return credentialRef{Command: secretToolLookupCommand(setup, service)}, nil
+}
+
+func secretToolStoreArgs(setup accountSetup, service string) []string {
+	label := "clibox " + setup.Account + " mail password"
+	return []string{"store", "--label", label, "service", service, "account", setup.Email}
+}
+
+func secretToolLookupCommand(setup accountSetup, service string) string {
+	return "secret-tool lookup service " + shellQuote(service) + " account " + shellQuote(setup.Email)
+}
+
+func runCredentialCommand(name string, args []string, input string) ([]byte, error) {
+	cmd := exec.Command(name, args...) // #nosec G204 -- credential-store binaries are selected by clibox; user secrets are passed via stdin, not argv.
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
+	return cmd.CombinedOutput()
 }
 
 func writeHimalayaAccountConfig(path string, setup accountSetup, credential credentialRef) error {
