@@ -116,7 +116,7 @@ func (m model) renderSetupEmail(width, height int) string {
 		styles.readerHeader.Width(width).Render("Email address"),
 		styles.selected.Width(min(width, max(30, lipgloss.Width(email)+2))).Render(" " + email),
 		"",
-		styles.readerBody.Width(width).Render("Examples: freddy@gmail.com, you@icloud.com, work@company.com"),
+		styles.readerBody.Width(width).Render("Examples: you@gmail.com, you@icloud.com, work@company.com"),
 		"",
 		styles.readerBody.Width(width).Render("Enter continues. q quits."),
 	}

@@ -124,8 +124,8 @@ email = "work@example.com"
 
 [accounts.gmail]
 default = true
-email = "freddy.rosa16@gmail.com"
-display-name = "Freddy Rosa"
+email = "person@gmail.com"
+display-name = "Example Person"
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("expected config write to succeed: %v", err)
@@ -135,10 +135,10 @@ display-name = "Freddy Rosa"
 	if !ok {
 		t.Fatal("expected account hint")
 	}
-	if hint.Account != "gmail" || hint.Email != "freddy.rosa16@gmail.com" {
+	if hint.Account != "gmail" || hint.Email != "person@gmail.com" {
 		t.Fatalf("unexpected hint: %+v", hint)
 	}
-	if hint.DisplayName != "Freddy Rosa" {
+	if hint.DisplayName != "Example Person" {
 		t.Fatalf("expected display name from config, got %q", hint.DisplayName)
 	}
 	if hint.Provider.Name != "Gmail" {

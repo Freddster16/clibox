@@ -25,6 +25,14 @@ install_homebrew() {
     return 0
   fi
 
+  if [ "${CLIBOX_INSTALL_HOMEBREW:-}" != "1" ]; then
+    echo "Homebrew is required to install missing clibox dependencies automatically." >&2
+    echo "Install Homebrew first: https://brew.sh/" >&2
+    echo "Or explicitly allow this installer to run Homebrew's official installer:" >&2
+    echo "  curl -fsSL https://raw.githubusercontent.com/Freddster16/clibox/main/install.sh | CLIBOX_INSTALL_HOMEBREW=1 sh" >&2
+    exit 1
+  fi
+
   case "$(uname -s)" in
     Darwin|Linux) ;;
     *)
