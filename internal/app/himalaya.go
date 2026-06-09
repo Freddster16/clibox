@@ -22,8 +22,17 @@ type pagedInboxBackend interface {
 	ListEnvelopePage(context.Context, int) ([]message, bool, error)
 }
 
+type searchablePagedInboxBackend interface {
+	SearchEnvelopePage(context.Context, int, string) ([]message, bool, error)
+}
+
 type messageBodyBackend interface {
 	ReadMessage(context.Context, message) (string, error)
+}
+
+type messageActionBackend interface {
+	ArchiveMessage(context.Context, message) error
+	DeleteMessage(context.Context, message) error
 }
 
 type draftBackend interface {
@@ -37,11 +46,15 @@ type accountSetupBackend interface {
 }
 
 type himalayaBackend struct {
-	binary   string
-	account  string
-	mailbox  string
-	pageSize int
-	runner   commandRunner
+	binary                string
+	account               string
+	mailbox               string
+	archiveFolder         string
+	archiveFolderExplicit bool
+	trashFolder           string
+	trashFolderExplicit   bool
+	pageSize              int
+	runner                commandRunner
 }
 
 type commandRunner interface {
@@ -72,13 +85,31 @@ func newHimalayaBackend(options Options) himalayaBackend {
 	binary := firstNonEmpty(options.Himalaya, os.Getenv("CLIBOX_HIMALAYA"), "himalaya")
 	mailbox := firstNonEmpty(options.Mailbox, "INBOX")
 	pageSize := options.PageSize
+	archiveFolder := firstNonEmpty(options.ArchiveFolder, os.Getenv("CLIBOX_ARCHIVE_FOLDER"))
+	trashFolder := strings.TrimSpace(os.Getenv("CLIBOX_TRASH_FOLDER"))
+	archiveExplicit := strings.TrimSpace(archiveFolder) != ""
+	trashExplicit := strings.TrimSpace(trashFolder) != ""
+	if !archiveExplicit || !trashExplicit {
+		if hint, ok := himalayaAccountHint(options.Account); ok {
+			if !archiveExplicit {
+				archiveFolder = hint.Provider.Folders["archive"]
+			}
+			if !trashExplicit {
+				trashFolder = hint.Provider.Folders["trash"]
+			}
+		}
+	}
 
 	return himalayaBackend{
-		binary:   binary,
-		account:  strings.TrimSpace(options.Account),
-		mailbox:  mailbox,
-		pageSize: pageSize,
-		runner:   osCommandRunner{},
+		binary:                binary,
+		account:               strings.TrimSpace(options.Account),
+		mailbox:               mailbox,
+		archiveFolder:         firstNonEmpty(archiveFolder, "Archive"),
+		archiveFolderExplicit: archiveExplicit,
+		trashFolder:           firstNonEmpty(trashFolder, "Trash"),
+		trashFolderExplicit:   trashExplicit,
+		pageSize:              pageSize,
+		runner:                osCommandRunner{},
 	}
 }
 
@@ -88,6 +119,14 @@ func (h himalayaBackend) Label() string {
 
 func (h himalayaBackend) WithAccount(account string) inboxBackend {
 	h.account = strings.TrimSpace(account)
+	if hint, ok := himalayaAccountHint(h.account); ok {
+		if !h.archiveFolderExplicit {
+			h.archiveFolder = firstNonEmpty(hint.Provider.Folders["archive"], "Archive")
+		}
+		if !h.trashFolderExplicit {
+			h.trashFolder = firstNonEmpty(hint.Provider.Folders["trash"], "Trash")
+		}
+	}
 	return h
 }
 
@@ -106,12 +145,20 @@ func (h himalayaBackend) ListEnvelopes(ctx context.Context) ([]message, error) {
 }
 
 func (h himalayaBackend) ListEnvelopePage(ctx context.Context, page int) ([]message, bool, error) {
+	return h.listEnvelopePage(ctx, page, "")
+}
+
+func (h himalayaBackend) SearchEnvelopePage(ctx context.Context, page int, query string) ([]message, bool, error) {
+	return h.listEnvelopePage(ctx, page, buildSearchQuery(query))
+}
+
+func (h himalayaBackend) listEnvelopePage(ctx context.Context, page int, query string) ([]message, bool, error) {
 	if h.runner == nil {
 		h.runner = osCommandRunner{}
 	}
 
 	var last commandFailure
-	for _, args := range h.listCandidates(page) {
+	for _, args := range h.listCandidates(page, query) {
 		stdout, stderr, err := h.runner.Run(ctx, h.binary, args)
 		if err == nil {
 			messages, parseErr := parseHimalayaMessages(stdout)
@@ -134,6 +181,42 @@ func (h himalayaBackend) ListEnvelopePage(ctx context.Context, page int) ([]mess
 		}
 	}
 	return nil, false, describeHimalayaFailure(last)
+}
+
+func (h himalayaBackend) ArchiveMessage(ctx context.Context, msg message) error {
+	return h.runMessageAction(ctx, msg, h.archiveCandidates)
+}
+
+func (h himalayaBackend) DeleteMessage(ctx context.Context, msg message) error {
+	return h.runMessageAction(ctx, msg, h.deleteCandidates)
+}
+
+func (h himalayaBackend) runMessageAction(ctx context.Context, msg message, candidates func(string) [][]string) error {
+	if h.runner == nil {
+		h.runner = osCommandRunner{}
+	}
+
+	id := strings.TrimSpace(msg.ID)
+	if id == "" {
+		return errors.New("email has no readable id")
+	}
+
+	var last commandFailure
+	for _, args := range candidates(id) {
+		stdout, stderr, err := h.runner.Run(ctx, h.binary, args)
+		if err == nil {
+			return nil
+		}
+
+		last = commandFailure{program: h.binary, args: args, stdout: stdout, stderr: stderr, err: err}
+		if isMissingExecutable(err) {
+			return describeHimalayaFailure(last)
+		}
+		if !looksLikeCommandShapeError(last.output()) {
+			return describeHimalayaFailure(last)
+		}
+	}
+	return describeHimalayaFailure(last)
 }
 
 func (h himalayaBackend) ReadMessage(ctx context.Context, msg message) (string, error) {
@@ -233,10 +316,14 @@ func (h himalayaBackend) SendDraft(ctx context.Context, content string) error {
 	return describeHimalayaFailure(last)
 }
 
-func (h himalayaBackend) listCandidates(page int) [][]string {
+func (h himalayaBackend) listCandidates(page int, query string) [][]string {
 	pageNumber := strconv.Itoa(page)
 	v1 := []string{"envelope", "list", "--output", "json", "--page", pageNumber}
-	v2 := []string{"envelopes", "list", "--json", "--page", pageNumber}
+	v2Command := "list"
+	if strings.TrimSpace(query) != "" {
+		v2Command = "search"
+	}
+	v2 := []string{"envelopes", v2Command, "--json", "--page", pageNumber}
 	if h.pageSize > 0 {
 		size := strconv.Itoa(h.pageSize)
 		v1 = append(v1, "--page-size", size)
@@ -244,6 +331,10 @@ func (h himalayaBackend) listCandidates(page int) [][]string {
 	}
 	v1 = appendFlags(v1, "--account", h.account, "--folder", h.mailbox)
 	v2 = appendFlags(v2, "--account", h.account, "--mailbox", h.mailbox)
+	if strings.TrimSpace(query) != "" {
+		v1 = append(v1, query)
+		v2 = append(v2, query)
+	}
 	return [][]string{v1, v2}
 }
 
@@ -281,6 +372,26 @@ func (h himalayaBackend) sendDraftCandidates() [][]string {
 	if strings.TrimSpace(h.account) != "" {
 		v2 = append(v2, "-a", h.account)
 	}
+
+	return [][]string{v1, v2}
+}
+
+func (h himalayaBackend) archiveCandidates(id string) [][]string {
+	v1 := appendFlags([]string{"message", "move", h.archiveFolder}, "--account", h.account, "--folder", h.mailbox)
+	v1 = append(v1, id)
+
+	v2 := []string{"messages", "move", id}
+	v2 = appendFlags(v2, "--account", h.account, "--from", h.mailbox, "--to", h.archiveFolder)
+
+	return [][]string{v1, v2}
+}
+
+func (h himalayaBackend) deleteCandidates(id string) [][]string {
+	v1 := appendFlags([]string{"message", "delete"}, "--account", h.account, "--folder", h.mailbox)
+	v1 = append(v1, id)
+
+	v2 := []string{"messages", "move", id}
+	v2 = appendFlags(v2, "--account", h.account, "--from", h.mailbox, "--to", h.trashFolder)
 
 	return [][]string{v1, v2}
 }

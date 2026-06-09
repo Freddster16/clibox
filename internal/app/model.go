@@ -19,12 +19,13 @@ const (
 )
 
 type Options struct {
-	Theme    string
-	Account  string
-	Mailbox  string
-	Himalaya string
-	PageSize int
-	backend  inboxBackend
+	Theme         string
+	Account       string
+	Mailbox       string
+	ArchiveFolder string
+	Himalaya      string
+	PageSize      int
+	backend       inboxBackend
 }
 
 type inboxLoadedMsg struct {
@@ -76,6 +77,11 @@ type draftSentMsg struct {
 	err    error
 }
 
+type messageActionDoneMsg struct {
+	action messageActionState
+	err    error
+}
+
 type model struct {
 	messages          []message
 	backend           inboxBackend
@@ -104,6 +110,12 @@ type model struct {
 	themeBeforePicker int
 	draft             draftState
 	draftSerial       int
+	searching         bool
+	searchInput       string
+	searchQuery       string
+	confirmDelete     bool
+	action            messageActionState
+	actionSerial      int
 	width             int
 	height            int
 }
@@ -214,13 +226,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.done {
 			m.loadedAll = true
 			if len(m.messages) == 0 {
+				if strings.TrimSpace(m.searchQuery) != "" {
+					return m.withStatus("No emails matched " + m.searchQuery + " in " + m.mailboxLabel()), nil
+				}
 				return m.withStatus("No emails found in " + m.mailboxLabel()), nil
 			}
-			return m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.mailboxLabel())), nil
+			return m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.scopeLabel())), nil
 		}
 
 		m.loadingMore = true
-		return m.withStatus(fmt.Sprintf("loaded %d emails; loading older mail in the background...", len(m.messages))), m.loadInboxPage(msg.page+1, msg.serial)
+		return m.withStatus(fmt.Sprintf("loaded %d emails from %s; loading older mail in the background...", len(m.messages), m.scopeLabel())), m.loadInboxPage(msg.page+1, msg.serial)
 	case inboxLoadedMsg:
 		m.loading = false
 		m.loadingMore = false
@@ -254,6 +269,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.messages = msg.messages
 		if len(m.messages) == 0 {
 			m.cursor = 0
+			if strings.TrimSpace(m.searchQuery) != "" {
+				return m.withStatus("No emails matched " + m.searchQuery + " in " + m.mailboxLabel()), nil
+			}
 			return m.withStatus("No emails found in " + m.mailboxLabel()), nil
 		}
 		if m.cursor >= len(m.messages) {
@@ -262,7 +280,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cursor < 0 {
 			m.cursor = 0
 		}
-		return m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.mailboxLabel())), nil
+		return m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.scopeLabel())), nil
 	case messageBodyLoadedMsg:
 		if msg.serial != m.messageLoadSerial {
 			return m, nil
@@ -354,6 +372,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cleanupDraft()
 		m.mode = nextMode
 		return m.withStatus("Email sent"), nil
+	case messageActionDoneMsg:
+		if msg.action.Serial != m.actionSerial {
+			return m, nil
+		}
+		m.action.Running = false
+		if msg.err != nil {
+			return m.withStatus("could not " + msg.action.Kind.verb() + " email: " + oneLine(msg.err.Error())), nil
+		}
+		m = m.removeMessage(msg.action.Message.ID)
+		if msg.action.Kind == archiveAction || m.mode == readerView {
+			m.mode = inboxView
+		}
+		return m.withStatus(msg.action.Kind.pastTense() + " " + selectedMessageLabel(msg.action.Message)), nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -402,6 +433,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showHelp = false
 			}
 			return m, nil
+		}
+
+		if m.searching {
+			return m.updateSearchPrompt(msg)
+		}
+
+		if m.confirmDelete {
+			return m.updateDeleteConfirm(msg)
 		}
 
 		if m.mode == draftReviewView {
@@ -463,6 +502,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == readerView {
 				m.mode = inboxView
 				m.status = ""
+			} else if m.mode == inboxView && strings.TrimSpace(m.searchQuery) != "" {
+				return m.clearSearch()
 			}
 		case "r":
 			if m.mode == readerView {
@@ -471,20 +512,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			return m.startDraft(composeDraft)
 		case "a":
-			return m.withStatus("archive arrives in Phase 5"), nil
+			return m.startMessageAction(archiveAction)
 		case "d":
-			return m.withStatus("delete confirmation arrives in Phase 5"), nil
+			return m.askDeleteConfirmation()
 		case "/":
-			return m.withStatus("search arrives in Phase 5"), nil
+			m.mode = inboxView
+			m.searching = true
+			m.searchInput = m.searchQuery
+			return m.withStatus("type search text, then press Enter"), nil
 		case "R":
-			m.loading = true
-			m.loadingMore = false
-			m.loadedAll = false
-			m.loadingMessageID = ""
-			m.readerOffset = 0
-			m.loadSerial++
-			m.status = "refreshing " + m.mailboxLabel() + "..."
-			return m, m.loadInbox()
+			return m.refreshInbox("refreshing " + m.scopeLabel() + "...")
 		case "A":
 			m.mode = setupView
 			m.setupStep = setupEmailStep
@@ -499,6 +536,164 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m model) updateSearchPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.searching = false
+		return m.withStatus("search canceled"), nil
+	case "enter":
+		input := strings.TrimSpace(m.searchInput)
+		if input != "" && buildSearchQuery(input) == "" {
+			return m.withStatus("try a search with letters, numbers, names, or email addresses"), nil
+		}
+		m.searching = false
+		m.searchQuery = input
+		if input == "" {
+			return m.refreshInbox("clearing search...")
+		}
+		return m.refreshInbox("searching " + m.mailboxLabel() + " for " + input + "...")
+	case "backspace", "delete":
+		runes := []rune(m.searchInput)
+		if len(runes) > 0 {
+			m.searchInput = string(runes[:len(runes)-1])
+		}
+	case "ctrl+u":
+		m.searchInput = ""
+	case "ctrl+w":
+		m.searchInput = trimLastWord(m.searchInput)
+	default:
+		if msg.Type == tea.KeyRunes {
+			for _, r := range msg.Runes {
+				if r >= 32 && r < 127 && len([]rune(m.searchInput)) < 160 {
+					m.searchInput += string(r)
+				}
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m model) updateDeleteConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "y", "Y", "enter":
+		m.confirmDelete = false
+		return m.startMessageAction(deleteAction)
+	case "n", "N", "esc", "b", "q":
+		m.confirmDelete = false
+		return m.withStatus("delete canceled"), nil
+	}
+	return m, nil
+}
+
+func (m model) askDeleteConfirmation() (model, tea.Cmd) {
+	if m.action.Running {
+		return m.withStatus("finish the current email action first"), nil
+	}
+	msg, index, ok := m.currentActionMessage()
+	if !ok {
+		return m.withStatus("No email selected"), nil
+	}
+	if strings.TrimSpace(msg.ID) == "" {
+		return m.withStatus("selected email has no backend id"), nil
+	}
+	m.confirmDelete = true
+	m.action = messageActionState{Kind: deleteAction, Message: msg, Index: index}
+	return m.withStatus("Move to Trash? y confirms, n cancels: " + selectedMessageLabel(msg)), nil
+}
+
+func (m model) startMessageAction(kind messageActionKind) (model, tea.Cmd) {
+	if m.action.Running {
+		return m.withStatus("finish the current email action first"), nil
+	}
+	backend, ok := m.backend.(messageActionBackend)
+	if !ok {
+		return m.withStatus("this backend cannot " + kind.verb() + " email yet"), nil
+	}
+
+	msg, index, ok := m.currentActionMessage()
+	if !ok {
+		return m.withStatus("No email selected"), nil
+	}
+	if strings.TrimSpace(msg.ID) == "" {
+		return m.withStatus("selected email has no backend id"), nil
+	}
+
+	m.actionSerial++
+	action := messageActionState{
+		Kind:    kind,
+		Message: msg,
+		Index:   index,
+		Serial:  m.actionSerial,
+		Running: true,
+	}
+	m.action = action
+	return m.withStatus(kind.presentParticiple() + " " + selectedMessageLabel(msg) + "..."), m.runMessageAction(backend, action)
+}
+
+func (m model) runMessageAction(backend messageActionBackend, action messageActionState) tea.Cmd {
+	return func() tea.Msg {
+		var err error
+		if action.Kind == deleteAction {
+			err = backend.DeleteMessage(context.Background(), action.Message)
+		} else {
+			err = backend.ArchiveMessage(context.Background(), action.Message)
+		}
+		return messageActionDoneMsg{action: action, err: err}
+	}
+}
+
+func (m model) currentActionMessage() (message, int, bool) {
+	if len(m.messages) == 0 {
+		return message{}, 0, false
+	}
+	index := min(m.cursor, len(m.messages)-1)
+	return m.messages[index], index, true
+}
+
+func (m model) removeMessage(id string) model {
+	if strings.TrimSpace(id) == "" {
+		return m
+	}
+	for i := range m.messages {
+		if m.messages[i].ID == id {
+			m.messages = append(m.messages[:i], m.messages[i+1:]...)
+			if len(m.messages) == 0 {
+				m.cursor = 0
+				m.readerOffset = 0
+				return m
+			}
+			if m.cursor >= len(m.messages) {
+				m.cursor = len(m.messages) - 1
+			}
+			m.readerOffset = 0
+			return m
+		}
+	}
+	return m
+}
+
+func (m model) clearSearch() (model, tea.Cmd) {
+	m.searching = false
+	m.searchInput = ""
+	m.searchQuery = ""
+	return m.refreshInbox("clearing search...")
+}
+
+func (m model) refreshInbox(status string) (model, tea.Cmd) {
+	m.loading = true
+	m.loadingMore = false
+	m.loadedAll = false
+	m.loadingMessageID = ""
+	m.readerOffset = 0
+	m.loadSerial++
+	m.status = status
+	return m, m.loadInbox()
 }
 
 func (m model) startDraft(kind draftKind) (model, tea.Cmd) {
@@ -617,24 +812,40 @@ func (m model) loadInbox() tea.Cmd {
 	}
 
 	backend := m.backend
-	if _, ok := backend.(pagedInboxBackend); ok {
+	if _, ok := backend.(searchablePagedInboxBackend); ok {
 		return m.loadInboxPage(1, m.loadSerial)
+	}
+	if strings.TrimSpace(m.searchQuery) == "" {
+		if _, ok := backend.(pagedInboxBackend); ok {
+			return m.loadInboxPage(1, m.loadSerial)
+		}
 	}
 	return func() tea.Msg {
 		messages, err := backend.ListEnvelopes(context.Background())
+		if strings.TrimSpace(m.searchQuery) != "" {
+			messages = filterMessages(messages, m.searchQuery)
+		}
 		return inboxLoadedMsg{messages: messages, err: err}
 	}
 }
 
 func (m model) loadInboxPage(page, serial int) tea.Cmd {
-	backend, ok := m.backend.(pagedInboxBackend)
-	if !ok {
-		return m.loadInbox()
+	query := m.searchQuery
+	if backend, ok := m.backend.(searchablePagedInboxBackend); ok {
+		return func() tea.Msg {
+			messages, done, err := backend.SearchEnvelopePage(context.Background(), page, query)
+			return inboxPageLoadedMsg{messages: messages, page: page, serial: serial, done: done, err: err}
+		}
 	}
-	return func() tea.Msg {
-		messages, done, err := backend.ListEnvelopePage(context.Background(), page)
-		return inboxPageLoadedMsg{messages: messages, page: page, serial: serial, done: done, err: err}
+	if strings.TrimSpace(query) == "" {
+		if backend, ok := m.backend.(pagedInboxBackend); ok {
+			return func() tea.Msg {
+				messages, done, err := backend.ListEnvelopePage(context.Background(), page)
+				return inboxPageLoadedMsg{messages: messages, page: page, serial: serial, done: done, err: err}
+			}
+		}
 	}
+	return m.loadInbox()
 }
 
 func (m model) openSelectedMessage() (model, tea.Cmd) {
@@ -759,6 +970,51 @@ func (m model) mailboxLabel() string {
 	return "INBOX"
 }
 
+func (m model) scopeLabel() string {
+	if strings.TrimSpace(m.searchQuery) != "" {
+		return fmt.Sprintf("%s search %q", m.mailboxLabel(), m.searchQuery)
+	}
+	return m.mailboxLabel()
+}
+
+func (m model) inboxTitle() string {
+	if strings.TrimSpace(m.searchQuery) != "" {
+		return fmt.Sprintf("Search: %s", m.searchQuery)
+	}
+	return "Inbox"
+}
+
 func (m model) editorLabel() string {
 	return firstNonEmpty(os.Getenv("CLIBOX_EDITOR"), os.Getenv("VISUAL"), os.Getenv("EDITOR"), "nvim")
+}
+
+func filterMessages(messages []message, query string) []message {
+	terms := searchTerms(query)
+	if len(terms) == 0 {
+		return messages
+	}
+	var filtered []message
+	for _, msg := range messages {
+		haystack := strings.ToLower(strings.Join([]string{msg.From, msg.Email, msg.Subject, msg.Preview, msg.Body}, " "))
+		matched := true
+		for _, term := range terms {
+			if !strings.Contains(haystack, term) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			filtered = append(filtered, msg)
+		}
+	}
+	return filtered
+}
+
+func trimLastWord(value string) string {
+	value = strings.TrimRight(value, " \t")
+	index := strings.LastIndexAny(value, " \t")
+	if index < 0 {
+		return ""
+	}
+	return strings.TrimRight(value[:index], " \t")
 }

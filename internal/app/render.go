@@ -51,7 +51,11 @@ func (m model) renderHeader() string {
 	}
 
 	account := styles.subtitle.Render(m.accountLabel())
-	count := styles.subtitle.Render(fmt.Sprintf("%d emails", len(m.messages)))
+	countLabel := fmt.Sprintf("%d emails", len(m.messages))
+	if strings.TrimSpace(m.searchQuery) != "" {
+		countLabel = fmt.Sprintf("%d results", len(m.messages))
+	}
+	count := styles.subtitle.Render(countLabel)
 	title := styles.title.Render("clibox")
 	badge := styles.themeBadge.Render("theme " + theme.name)
 	left := title + " " + badge
@@ -69,7 +73,7 @@ func (m model) renderInbox(height int) string {
 		return m.renderWideInbox(height)
 	}
 
-	lines := []string{styles.panelTitle.Render("Inbox")}
+	lines := []string{styles.panelTitle.Render(m.inboxTitle())}
 	lines = append(lines, m.renderRows(m.width, height-3)...)
 	lines = append(lines, "")
 	lines = append(lines, styles.muted.Render(fmt.Sprintf("Theme %s. Press t to choose, ? for help.", m.activeTheme().name)))
@@ -226,7 +230,7 @@ func (m model) renderWideInbox(height int) string {
 
 	rail := m.renderMailboxRail(railWidth, height)
 	list := strings.Join(append(
-		[]string{styles.panelTitle.Render("Inbox")},
+		[]string{styles.panelTitle.Render(m.inboxTitle())},
 		m.renderRows(listWidth, height-1)...,
 	), "\n")
 	preview := m.renderPreview(readerWidth, height)
@@ -270,9 +274,12 @@ func (m model) renderMailboxRail(width, height int) string {
 func (m model) renderRows(width, height int) []string {
 	styles := m.activeTheme().styles
 	if m.loading && len(m.messages) == 0 {
-		return []string{styles.row.Width(width).Render(truncate("  Loading inbox...", width))}
+		return []string{styles.row.Width(width).Render(truncate("  Loading "+m.scopeLabel()+"...", width))}
 	}
 	if len(m.messages) == 0 {
+		if strings.TrimSpace(m.searchQuery) != "" {
+			return []string{styles.row.Width(width).Render(truncate("  No search results. Press / to search again or Esc to clear.", width))}
+		}
 		return []string{styles.row.Width(width).Render(truncate("  No messages loaded. Press R to retry.", width))}
 	}
 
@@ -419,6 +426,14 @@ func (m model) renderFooter() string {
 		if m.draft.Sending {
 			hints = "sending email..."
 		}
+	} else if m.searching {
+		hints = "search: " + m.searchInput + "_  |  enter apply  esc cancel  ctrl+u clear"
+	} else if m.confirmDelete {
+		hints = "Move selected email to Trash?  y confirm  n cancel"
+	} else if m.action.Running {
+		hints = m.action.Kind.presentParticiple() + " email..."
+	} else if strings.TrimSpace(m.searchQuery) != "" && m.mode == inboxView {
+		hints = themeHint + "  |  / search again  esc clear search  j/k move  enter read  a archive  d delete  R refresh  ? help"
 	}
 	if m.status != "" {
 		hints = m.status + "  |  " + hints
@@ -456,9 +471,10 @@ func (m model) overlayHelp(content string) string {
 		"c          compose in $EDITOR",
 		"s          send reviewed draft",
 		"e          edit reviewed draft",
-		"a          archive selected email (planned)",
-		"d          delete selected email (planned)",
-		"/          search current mailbox (planned)",
+		"a          archive selected email",
+		"d          delete selected email with confirmation",
+		"/          search current mailbox",
+		"Esc        clear active search in inbox",
 		"R          refresh inbox",
 		"A          add or update an email account",
 		"t          open theme picker",

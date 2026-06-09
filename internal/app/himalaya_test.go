@@ -209,6 +209,40 @@ func TestHimalayaBackendOmitsPageSizeWhenUnset(t *testing.T) {
 	}
 }
 
+func TestHimalayaBackendSearchesEnvelopePages(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stdout: []byte(`[{"id":"7","subject":"Deploy notes","from":"Alice <alice@example.com>"}]`),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:   "himalaya",
+		account:  "personal",
+		mailbox:  "INBOX",
+		pageSize: 1,
+		runner:   runner,
+	}
+
+	messages, done, err := backend.SearchEnvelopePage(context.Background(), 1, "Alice deploy")
+	if err != nil {
+		t.Fatalf("expected search page to load: %v", err)
+	}
+	if done {
+		t.Fatal("expected full page to keep pagination open")
+	}
+	if len(messages) != 1 || messages[0].ID != "7" {
+		t.Fatalf("unexpected search messages: %+v", messages)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected one search command, got %v", runner.calls)
+	}
+	for _, want := range []string{"himalaya envelope list --output json --page 1 --page-size 1 --account personal --folder INBOX", "subject alice", "body deploy", "order by date desc"} {
+		if !strings.Contains(runner.calls[0], want) {
+			t.Fatalf("expected search command to contain %q, got %q", want, runner.calls[0])
+		}
+	}
+}
+
 func TestHimalayaBackendTreatsOutOfBoundsPageAsEnd(t *testing.T) {
 	runner := &fakeCommandRunner{results: []fakeCommandResult{
 		{
@@ -238,6 +272,70 @@ func TestHimalayaBackendTreatsOutOfBoundsPageAsEnd(t *testing.T) {
 	}
 	if len(runner.calls) != 2 {
 		t.Fatalf("expected one successful page and one end page, got %v", runner.calls)
+	}
+}
+
+func TestHimalayaBackendArchivesMessage(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{{stdout: []byte("moved")}}}
+	backend := himalayaBackend{
+		binary:        "himalaya",
+		account:       "personal",
+		mailbox:       "INBOX",
+		archiveFolder: "Archive",
+		runner:        runner,
+	}
+
+	if err := backend.ArchiveMessage(context.Background(), message{ID: "42"}); err != nil {
+		t.Fatalf("expected archive to succeed: %v", err)
+	}
+	want := "himalaya message move Archive --account personal --folder INBOX 42"
+	if len(runner.calls) != 1 || runner.calls[0] != want {
+		t.Fatalf("unexpected archive command:\nwant %q\ngot  %v", want, runner.calls)
+	}
+}
+
+func TestHimalayaBackendDeletesMessage(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{{stdout: []byte("deleted")}}}
+	backend := himalayaBackend{
+		binary:  "himalaya",
+		account: "personal",
+		mailbox: "INBOX",
+		runner:  runner,
+	}
+
+	if err := backend.DeleteMessage(context.Background(), message{ID: "42"}); err != nil {
+		t.Fatalf("expected delete to succeed: %v", err)
+	}
+	want := "himalaya message delete --account personal --folder INBOX 42"
+	if len(runner.calls) != 1 || runner.calls[0] != want {
+		t.Fatalf("unexpected delete command:\nwant %q\ngot  %v", want, runner.calls)
+	}
+}
+
+func TestHimalayaBackendArchiveFallsBackToV2Shape(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stderr: []byte("error: unrecognized subcommand 'message'"),
+			err:    errors.New("exit status 2"),
+		},
+		{
+			stdout: []byte("moved"),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:        "himalaya",
+		account:       "personal",
+		mailbox:       "INBOX",
+		archiveFolder: "Archive",
+		runner:        runner,
+	}
+
+	if err := backend.ArchiveMessage(context.Background(), message{ID: "42"}); err != nil {
+		t.Fatalf("expected fallback archive to succeed: %v", err)
+	}
+	want := "himalaya messages move 42 --account personal --from INBOX --to Archive"
+	if len(runner.calls) != 2 || runner.calls[1] != want {
+		t.Fatalf("unexpected fallback archive command:\nwant %q\ngot  %v", want, runner.calls)
 	}
 }
 

@@ -16,14 +16,17 @@ func main() {
 	theme := flags.String("theme", "", "start clibox with a theme: nocturne, ember, or lagoon")
 	account := flags.String("account", "", "email account name to read")
 	mailbox := flags.String("mailbox", "INBOX", "mailbox/folder to read")
+	archiveFolder := flags.String("archive-folder", "", "advanced: mailbox/folder to move archived messages into")
 	backendBinary := flags.String("backend", "", "advanced: path to the email backend binary")
 	himalaya := flags.String("himalaya", "", "deprecated alias for --backend")
 	pageSize := flags.Int("page-size", 0, "advanced: envelopes to request per page; 0 loads all pages with backend defaults")
 	showThemes := flags.Bool("themes", false, "list available themes")
 	flags.Usage = func() {
-		fmt.Fprintf(flags.Output(), "Usage: %s [doctor] [--theme name] [--account name] [--mailbox name] [--themes]\n\n", os.Args[0])
+		fmt.Fprintf(flags.Output(), "Usage: %s [doctor] [--theme name] [--account name] [--mailbox name] [--archive-folder name] [--themes]\n\n", os.Args[0])
 		fmt.Fprintln(flags.Output(), "  -account string")
 		fmt.Fprintln(flags.Output(), "    \temail account name to read")
+		fmt.Fprintln(flags.Output(), "  -archive-folder string")
+		fmt.Fprintln(flags.Output(), "    \tadvanced: mailbox/folder to move archived messages into")
 		fmt.Fprintln(flags.Output(), "  -backend string")
 		fmt.Fprintln(flags.Output(), "    \tadvanced: path to the email backend binary")
 		fmt.Fprintln(flags.Output(), "  -mailbox string")
@@ -52,11 +55,12 @@ func main() {
 	}
 
 	options := app.Options{
-		Theme:    *theme,
-		Account:  *account,
-		Mailbox:  *mailbox,
-		Himalaya: firstNonEmpty(*backendBinary, *himalaya),
-		PageSize: *pageSize,
+		Theme:         *theme,
+		Account:       *account,
+		Mailbox:       *mailbox,
+		ArchiveFolder: *archiveFolder,
+		Himalaya:      firstNonEmpty(*backendBinary, *himalaya),
+		PageSize:      *pageSize,
 	}
 	if doctor {
 		report, err := app.Doctor(context.Background(), options)

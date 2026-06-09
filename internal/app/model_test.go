@@ -151,17 +151,133 @@ func TestQuitFromInbox(t *testing.T) {
 	}
 }
 
-func TestPlannedActionsShowStatus(t *testing.T) {
+func TestSearchPromptCanCancel(t *testing.T) {
 	m := newTestModel()
 
-	m = pressKey(t, m, "a")
+	m = pressKey(t, m, "/")
 	if m.status == "" {
-		t.Fatal("expected planned archive action to show status")
+		t.Fatal("expected search action to show status")
 	}
 
-	m = pressKey(t, m, "j")
-	if m.status != "" {
-		t.Fatal("expected navigation to clear status")
+	m = pressKey(t, m, "esc")
+	if m.searching {
+		t.Fatal("expected esc to cancel search prompt")
+	}
+}
+
+func TestArchiveRemovesSelectedMessage(t *testing.T) {
+	backend := &actionFlowBackend{}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = testMessages()
+	m.loading = false
+
+	next, cmd := m.Update(keyMsg("a"))
+	updated := next.(model)
+	if cmd == nil || !updated.action.Running {
+		t.Fatal("expected archive to start a backend action")
+	}
+	done := cmd().(messageActionDoneMsg)
+	next, _ = updated.Update(done)
+	updated = next.(model)
+
+	if backend.archived != "1" {
+		t.Fatalf("expected first message to be archived, got %q", backend.archived)
+	}
+	if len(updated.messages) != 1 || updated.messages[0].ID != "2" {
+		t.Fatalf("expected archived message to be removed, got %+v", updated.messages)
+	}
+	if !strings.Contains(updated.status, "Archived") {
+		t.Fatalf("expected archived status, got %q", updated.status)
+	}
+}
+
+func TestDeleteRequiresConfirmation(t *testing.T) {
+	backend := &actionFlowBackend{}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = testMessages()
+	m.loading = false
+
+	m = pressKey(t, m, "d")
+	if !m.confirmDelete {
+		t.Fatal("expected delete to ask for confirmation")
+	}
+	if backend.deleted != "" {
+		t.Fatalf("expected delete not to run before confirmation, got %q", backend.deleted)
+	}
+
+	m = pressKey(t, m, "n")
+	if m.confirmDelete {
+		t.Fatal("expected n to cancel delete confirmation")
+	}
+
+	m = pressKey(t, m, "d")
+	next, cmd := m.Update(keyMsg("y"))
+	updated := next.(model)
+	if cmd == nil || !updated.action.Running {
+		t.Fatal("expected y to start delete action")
+	}
+	done := cmd().(messageActionDoneMsg)
+	next, _ = updated.Update(done)
+	updated = next.(model)
+
+	if backend.deleted != "1" {
+		t.Fatalf("expected first message to be deleted, got %q", backend.deleted)
+	}
+	if len(updated.messages) != 1 || updated.messages[0].ID != "2" {
+		t.Fatalf("expected deleted message to be removed, got %+v", updated.messages)
+	}
+}
+
+func TestSearchPromptLoadsSearchResults(t *testing.T) {
+	backend := &actionFlowBackend{
+		searchMessages: []message{{ID: "9", From: "Alice", Subject: "Deploy"}},
+	}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = testMessages()
+	m.loading = false
+
+	m = pressKey(t, m, "/")
+	if !m.searching {
+		t.Fatal("expected / to open search prompt")
+	}
+	m = pressKey(t, m, "Alice deploy")
+	next, cmd := m.Update(keyMsg("enter"))
+	updated := next.(model)
+	if updated.searching {
+		t.Fatal("expected enter to close search prompt")
+	}
+	if updated.searchQuery != "Alice deploy" {
+		t.Fatalf("expected search query to be stored, got %q", updated.searchQuery)
+	}
+	if cmd == nil {
+		t.Fatal("expected search to load inbox")
+	}
+	loaded := cmd().(inboxPageLoadedMsg)
+	next, _ = updated.Update(loaded)
+	updated = next.(model)
+
+	if backend.searchQuery != "Alice deploy" {
+		t.Fatalf("expected backend search query, got %q", backend.searchQuery)
+	}
+	if len(updated.messages) != 1 || updated.messages[0].ID != "9" {
+		t.Fatalf("expected search results to replace inbox, got %+v", updated.messages)
+	}
+}
+
+func TestEscClearsActiveSearch(t *testing.T) {
+	backend := &actionFlowBackend{}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = testMessages()
+	m.searchQuery = "alice"
+	m.loading = false
+
+	next, cmd := m.Update(keyMsg("esc"))
+	updated := next.(model)
+	if updated.searchQuery != "" {
+		t.Fatalf("expected search query to clear, got %q", updated.searchQuery)
+	}
+	if cmd == nil {
+		t.Fatal("expected clearing search to reload inbox")
 	}
 }
 
@@ -911,6 +1027,39 @@ func (b *draftFlowBackend) SendDraft(_ context.Context, content string) error {
 	return nil
 }
 
+type actionFlowBackend struct {
+	archived       string
+	deleted        string
+	searchQuery    string
+	searchMessages []message
+}
+
+func (b *actionFlowBackend) ListEnvelopes(context.Context) ([]message, error) {
+	return testMessages(), nil
+}
+
+func (b *actionFlowBackend) Label() string {
+	return "action fake"
+}
+
+func (b *actionFlowBackend) SearchEnvelopePage(_ context.Context, _ int, query string) ([]message, bool, error) {
+	b.searchQuery = query
+	if b.searchMessages != nil {
+		return b.searchMessages, true, nil
+	}
+	return testMessages(), true, nil
+}
+
+func (b *actionFlowBackend) ArchiveMessage(_ context.Context, msg message) error {
+	b.archived = msg.ID
+	return nil
+}
+
+func (b *actionFlowBackend) DeleteMessage(_ context.Context, msg message) error {
+	b.deleted = msg.ID
+	return nil
+}
+
 func keyMsg(key string) tea.KeyMsg {
 	switch key {
 	case "enter":
@@ -925,6 +1074,8 @@ func keyMsg(key string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyCtrlO}
 	case "ctrl+u":
 		return tea.KeyMsg{Type: tea.KeyCtrlU}
+	case "ctrl+w":
+		return tea.KeyMsg{Type: tea.KeyCtrlW}
 	case "pgup":
 		return tea.KeyMsg{Type: tea.KeyPgUp}
 	case "pgdown":

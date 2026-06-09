@@ -8,11 +8,12 @@ at home next to Neovim, Codex, OpenCode, Hermes, tmux, and a shell: open the
 inbox, move with `j/k`, read with `Enter`, reply in `$EDITOR`, archive with
 `a`, search with `/`, change themes with `t`, and quit with `q`.
 
-Status: Phase 4 is implemented. `clibox` loads real inbox envelopes after
+Status: Phase 5 is implemented. `clibox` loads real inbox envelopes after
 account setup, opens the selected email body on demand with `Enter`, and keeps
 opened bodies cached for the current session. First-run setup happens inside
 `clibox` for common providers. Compose and reply now open the user's terminal
-editor, return to a review screen, and send only after confirmation.
+editor, return to a review screen, and send only after confirmation. Archive,
+delete confirmation, and mailbox search now work from the TUI.
 
 ## Current implementation
 
@@ -28,10 +29,11 @@ editor, return to a review screen, and send only after confirmation.
 - Composes new email with `c`, replies from the reader with `r`, opens
   `$EDITOR`, then returns to a review screen where `s` sends and `e` edits
   again.
+- Archives selected email with `a`, moves selected email to Trash after `d` + `y`,
+  and searches the current mailbox with `/`.
 - Supports `--account`, `--mailbox`, and advanced backend tuning flags.
 - Refreshes the envelope list with `R`.
 - Provides `clibox doctor` for setup checks before opening the TUI.
-- Keeps archive/delete and search in later phases.
 
 ## Install
 
@@ -109,8 +111,9 @@ The first run should be boring in the best way:
 3. Paste the provider password or app password once.
 4. Land in the inbox.
 5. Press `Enter` to read, `b` to go back, `r` to reply, `c` to compose, `s` to
-   send a reviewed draft, `a` to archive, `/` to search, `t` to open the theme
-   picker, and `q` to leave.
+   send a reviewed draft, `a` to archive, `d` then `y` to move to Trash, `/` to
+   search, `Esc` to clear an active search, `t` to open the theme picker, and
+   `q` to leave.
 
 ## Themes
 
@@ -149,6 +152,7 @@ clibox
 # 5. Optionally choose account or mailbox at launch after setup exists.
 clibox --account personal
 clibox --mailbox INBOX
+clibox --archive-folder Archive
 
 # 6. Reply or compose from the TUI. clibox opens CLIBOX_EDITOR, VISUAL,
 # EDITOR, or nvim, then returns to a review screen before sending.
@@ -190,6 +194,7 @@ Useful launch flags:
 clibox --account personal --mailbox INBOX
 clibox --backend /path/to/backend
 clibox --page-size 50
+clibox --archive-folder "[Gmail]/All Mail"
 clibox doctor --account personal --mailbox INBOX
 ```
 
@@ -215,6 +220,10 @@ The adapter currently tries the stable Himalaya v1 command first
 v2 shape (`himalaya envelopes list --json`) only when the command shape is
 incompatible. It paginates through the mailbox in the background instead of
 capping the inbox at the first page or blocking startup on every old message.
+Search uses the same pagination path and generates a backend query from plain
+text across sender, recipient, subject, and body. Archive moves messages to the
+provider archive folder, and delete uses Himalaya's safe delete behavior, which
+moves mail to Trash or marks it deleted instead of expunging it immediately.
 Runtime/setup errors, such as authentication or unknown-account failures, are
 shown directly instead of being hidden behind another fallback.
 
@@ -277,6 +286,7 @@ Default keymap:
 | `a` | Archive selected email |
 | `d` | Delete selected email, with confirmation |
 | `/` | Search current mailbox |
+| `Esc` | Clear the active search while in the inbox |
 | `R` | Refresh inbox |
 | `A` | Add or update an email account inside the TUI |
 | `t` | Open the theme picker |
@@ -304,6 +314,8 @@ Build `clibox` in Go:
 - Drafts: create temporary owner-only draft files, open `CLIBOX_EDITOR`,
   `VISUAL`, `EDITOR`, or `nvim`, show a review step after the editor exits, and
   send through Himalaya over stdin.
+- Inbox actions: archive and delete through the backend adapter, plus
+  plain-language search translated into the backend's query DSL.
 - Planned app config: TOML at `~/.config/clibox/config.toml`; current account
   connection details live in the backend config generated during setup.
 
@@ -365,6 +377,8 @@ Keep writing email inside the user's editor:
 - Keep draft content out of command-line arguments by sending it through stdin.
 
 ### Phase 5: Inbox actions
+
+Done in the fifth implementation pass.
 
 Round out the daily workflow:
 

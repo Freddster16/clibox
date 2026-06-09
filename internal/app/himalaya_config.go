@@ -167,6 +167,7 @@ func buildHimalayaAccountBlock(setup accountSetup, credential credentialRef, def
 		"folder.aliases.sent = "+tomlString(folders["sent"]),
 		"folder.aliases.drafts = "+tomlString(folders["drafts"]),
 		"folder.aliases.trash = "+tomlString(folders["trash"]),
+		"folder.aliases.archive = "+tomlString(folders["archive"]),
 		"backend.type = \"imap\"",
 		"backend.host = "+tomlString(provider.IMAPHost),
 		"backend.port = "+strconv.Itoa(provider.IMAPPort),

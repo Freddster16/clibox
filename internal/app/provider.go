@@ -53,10 +53,11 @@ func detectProvider(email string) providerInfo {
 			SMTPPort:     587,
 			SMTPSecurity: "start-tls",
 			Folders: map[string]string{
-				"inbox":  "INBOX",
-				"sent":   "[Gmail]/Sent Mail",
-				"drafts": "[Gmail]/Drafts",
-				"trash":  "[Gmail]/Trash",
+				"inbox":   "INBOX",
+				"sent":    "[Gmail]/Sent Mail",
+				"drafts":  "[Gmail]/Drafts",
+				"trash":   "[Gmail]/Trash",
+				"archive": "[Gmail]/All Mail",
 			},
 			Instructions: []string{
 				"Enable IMAP in Gmail settings if it is disabled.",
@@ -195,10 +196,11 @@ func (p providerInfo) normalizeSecret(secret string) string {
 
 func standardFolders() map[string]string {
 	return map[string]string{
-		"inbox":  "INBOX",
-		"sent":   "Sent",
-		"drafts": "Drafts",
-		"trash":  "Trash",
+		"inbox":   "INBOX",
+		"sent":    "Sent",
+		"drafts":  "Drafts",
+		"trash":   "Trash",
+		"archive": "Archive",
 	}
 }
 

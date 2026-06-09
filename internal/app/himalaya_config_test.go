@@ -22,6 +22,7 @@ func TestBuildHimalayaAccountBlockUsesBackendConfig(t *testing.T) {
 		"default = true",
 		"email = \"freddy@gmail.com\"",
 		"folder.aliases.sent = \"[Gmail]/Sent Mail\"",
+		"folder.aliases.archive = \"[Gmail]/All Mail\"",
 		"backend.type = \"imap\"",
 		"backend.host = \"imap.gmail.com\"",
 		"backend.port = 993",
