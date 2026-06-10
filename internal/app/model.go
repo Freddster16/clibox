@@ -433,7 +433,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Summary: parseDraftSummary(msg.content),
 			Serial:  msg.serial,
 		}
-		return m.withStatus("opening " + msg.request.Kind.name() + " in " + m.editorLabel() + "..."), m.openDraftEditor()
+		if msg.request.Kind == replyDraft {
+			m = m.setDraftFocus(draftFieldBody)
+			if strings.HasPrefix(strings.TrimSpace(m.draft.Summary.Body), ">") {
+				m.draft.Cursor = 0
+			}
+		} else {
+			m = m.setDraftFocus(draftFieldTo)
+		}
+		m = m.syncDraftContent()
+		m.mode = draftReviewView
+		return m.withStatus("write " + msg.request.Kind.name() + "; Tab fields, Ctrl+S sends, Esc discards"), nil
 	case draftEditorFinishedMsg:
 		if msg.serial != m.draftSerial {
 			return m, nil
@@ -448,8 +458,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.draft.Content = content
 			m.draft.Summary = parseDraftSummary(content)
 			m.draft.Sending = false
+			m = m.setDraftFocus(draftFieldBody)
 			m.mode = draftReviewView
-			return m.withStatus("editor reported an error; review draft before sending"), nil
+			return m.withStatus("editor reported an error; review draft before sending with Ctrl+S"), nil
 		}
 		content, err := readDraftFile(msg.path)
 		if err != nil {
@@ -459,8 +470,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.draft.Content = content
 		m.draft.Summary = parseDraftSummary(content)
 		m.draft.Sending = false
+		m = m.setDraftFocus(draftFieldBody)
 		m.mode = draftReviewView
-		return m.withStatus("review draft; press s to send or e to edit"), nil
+		return m.withStatus("draft updated; Ctrl+S sends"), nil
 	case draftSentMsg:
 		if msg.serial != m.draftSerial {
 			return m, nil
@@ -772,6 +784,11 @@ func (m model) prepareDraft(backend draftBackend, request draftRequest, serial i
 func (m model) openDraftEditor() tea.Cmd {
 	path := m.draft.Path
 	serial := m.draft.Serial
+	if err := saveDraftFile(path, m.draft.Content); err != nil {
+		return func() tea.Msg {
+			return draftEditorFinishedMsg{path: path, serial: serial, err: err}
+		}
+	}
 	cmd, err := draftEditorCommand(path, m.editor)
 	if err != nil {
 		return func() tea.Msg {
@@ -797,30 +814,131 @@ func (m model) updateDraftReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		m.cleanupDraft()
 		return m, tea.Quit
-	case "q", "esc", "b":
+	case "esc":
 		nextMode := m.draftReturnMode()
 		m.cleanupDraft()
 		m.mode = nextMode
 		return m.withStatus("draft discarded"), nil
-	case "e":
+	case "ctrl+o":
 		return m.withStatus("opening " + m.draft.Kind.name() + " in " + m.editorLabel() + "..."), m.openDraftEditor()
-	case "s":
-		summary := parseDraftSummary(m.draft.Content)
-		if err := validateDraftForSend(summary); err != nil {
-			m.draft.Summary = summary
-			return m.withStatus(err.Error()), nil
+	case "ctrl+s":
+		return m.sendCurrentDraft()
+	case "tab", "down":
+		return m.setDraftFocus(m.draft.Focus + 1).withStatus(""), nil
+	case "shift+tab", "backtab", "up":
+		return m.setDraftFocus(m.draft.Focus - 1).withStatus(""), nil
+	case "enter":
+		if m.draft.Focus == draftFieldBody {
+			return m.insertDraftText("\n").withStatus(""), nil
 		}
-		backend, ok := m.backend.(draftBackend)
-		if !ok {
-			return m.withStatus("this backend cannot send email yet"), nil
-		}
-		m.draft.Summary = summary
-		m.draft.Sending = true
-		return m.withStatus("sending email..."), m.sendDraft(backend, m.draft.Content, m.draft.Serial)
-	case "?":
-		m.showHelp = true
+		return m.setDraftFocus(m.draft.Focus + 1).withStatus(""), nil
+	case "left":
+		return m.moveDraftCursor(-1).withStatus(""), nil
+	case "right":
+		return m.moveDraftCursor(1).withStatus(""), nil
+	case "home":
+		m.draft.Cursor = 0
+		return m.withStatus(""), nil
+	case "end":
+		m.draft.Cursor = draftTextLen(m.draftFieldValue())
+		return m.withStatus(""), nil
+	case "backspace":
+		return m.deleteDraftBackward().withStatus(""), nil
+	case "ctrl+u":
+		return m.clearDraftField().withStatus(""), nil
+	case "ctrl+w":
+		return m.trimDraftFieldWord().withStatus(""), nil
+	}
+	if msg.Type == tea.KeyRunes {
+		return m.insertDraftText(string(msg.Runes)).withStatus(""), nil
 	}
 	return m, nil
+}
+
+func (m model) sendCurrentDraft() (model, tea.Cmd) {
+	m = m.syncDraftContent()
+	summary := parseDraftSummary(m.draft.Content)
+	if err := validateDraftForSend(summary); err != nil {
+		m.draft.Summary = summary
+		return m.withStatus(err.Error()), nil
+	}
+	backend, ok := m.backend.(draftBackend)
+	if !ok {
+		return m.withStatus("this backend cannot send email yet"), nil
+	}
+	m.draft.Summary = summary
+	m.draft.Sending = true
+	return m.withStatus("sending email..."), m.sendDraft(backend, m.draft.Content, m.draft.Serial)
+}
+
+func (m model) setDraftFocus(field draftField) model {
+	for field < 0 {
+		field += draftFieldCount
+	}
+	field = field % draftFieldCount
+	m.draft.Focus = field
+	m.draft.Cursor = draftTextLen(m.draftFieldValue())
+	return m
+}
+
+func (m model) draftFieldValue() string {
+	switch m.draft.Focus {
+	case draftFieldSubject:
+		return m.draft.Summary.Subject
+	case draftFieldBody:
+		return m.draft.Summary.Body
+	default:
+		return m.draft.Summary.To
+	}
+}
+
+func (m model) setDraftFieldValue(value string) model {
+	switch m.draft.Focus {
+	case draftFieldSubject:
+		m.draft.Summary.Subject = terminalSafeLine(value)
+	case draftFieldBody:
+		m.draft.Summary.Body = terminalSafeText(normalizeDraftContent(value))
+	default:
+		m.draft.Summary.To = terminalSafeLine(value)
+	}
+	return m.syncDraftContent()
+}
+
+func (m model) insertDraftText(text string) model {
+	value := m.draftFieldValue()
+	next, cursor := insertTextAt(value, text, m.draft.Cursor)
+	m.draft.Cursor = cursor
+	return m.setDraftFieldValue(next)
+}
+
+func (m model) deleteDraftBackward() model {
+	value := m.draftFieldValue()
+	next, cursor := deleteTextBefore(value, m.draft.Cursor)
+	m.draft.Cursor = cursor
+	return m.setDraftFieldValue(next)
+}
+
+func (m model) clearDraftField() model {
+	m.draft.Cursor = 0
+	return m.setDraftFieldValue("")
+}
+
+func (m model) trimDraftFieldWord() model {
+	value := m.draftFieldValue()
+	before, after := splitTextAt(value, m.draft.Cursor)
+	before = trimLastWord(before)
+	m.draft.Cursor = draftTextLen(before)
+	return m.setDraftFieldValue(before + after)
+}
+
+func (m model) moveDraftCursor(delta int) model {
+	m.draft.Cursor = min(max(0, m.draft.Cursor+delta), draftTextLen(m.draftFieldValue()))
+	return m
+}
+
+func (m model) syncDraftContent() model {
+	m.draft.Content = draftContentFromSummary(m.draft.Summary)
+	return m
 }
 
 func (m model) sendDraft(backend draftBackend, content string, serial int) tea.Cmd {

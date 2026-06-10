@@ -29,6 +29,8 @@ type draftState struct {
 	Summary draftSummary
 	Serial  int
 	Sending bool
+	Focus   draftField
+	Cursor  int
 }
 
 type draftSummary struct {
@@ -40,6 +42,15 @@ type draftSummary struct {
 	Body    string
 }
 
+type draftField int
+
+const (
+	draftFieldTo draftField = iota
+	draftFieldSubject
+	draftFieldBody
+	draftFieldCount
+)
+
 func (k draftKind) name() string {
 	if k == replyDraft {
 		return "reply"
@@ -49,9 +60,9 @@ func (k draftKind) name() string {
 
 func (k draftKind) title() string {
 	if k == replyDraft {
-		return "Review reply"
+		return "Reply"
 	}
-	return "Review message"
+	return "Compose"
 }
 
 func writeDraftFile(content string) (string, error) {
@@ -89,6 +100,32 @@ func readDraftFile(path string) (string, error) {
 		return "", err
 	}
 	return normalizeDraftContent(string(data)), nil
+}
+
+func saveDraftFile(path, content string) error {
+	if !isDraftFilePath(path) {
+		return errors.New("draft path is outside clibox temporary drafts")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("draft path must not be a symlink")
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		closeErr := file.Close()
+		return errors.Join(err, closeErr)
+	}
+	if _, err := file.WriteString(ensureFinalNewline(normalizeDraftContent(content))); err != nil {
+		closeErr := file.Close()
+		return errors.Join(err, closeErr)
+	}
+	return file.Close()
 }
 
 func removeDraftFile(path string) {
@@ -201,6 +238,52 @@ func validateDraftForSend(summary draftSummary) error {
 		return errors.New("add at least one recipient before sending")
 	}
 	return nil
+}
+
+func draftContentFromSummary(summary draftSummary) string {
+	lines := []string{}
+	if strings.TrimSpace(summary.From) != "" {
+		lines = append(lines, "From: "+safeHeaderValue(summary.From))
+	}
+	lines = append(lines, "To: "+safeHeaderValue(summary.To))
+	if strings.TrimSpace(summary.Cc) != "" {
+		lines = append(lines, "Cc: "+safeHeaderValue(summary.Cc))
+	}
+	if strings.TrimSpace(summary.Bcc) != "" {
+		lines = append(lines, "Bcc: "+safeHeaderValue(summary.Bcc))
+	}
+	lines = append(lines, "Subject: "+safeHeaderValue(summary.Subject), "", strings.TrimRight(normalizeDraftContent(summary.Body), "\n"))
+	return ensureFinalNewline(strings.Join(lines, "\n"))
+}
+
+func draftTextLen(value string) int {
+	return len([]rune(value))
+}
+
+func splitTextAt(value string, cursor int) (string, string) {
+	runes := []rune(value)
+	cursor = min(max(0, cursor), len(runes))
+	return string(runes[:cursor]), string(runes[cursor:])
+}
+
+func insertTextAt(value, text string, cursor int) (string, int) {
+	before, after := splitTextAt(value, cursor)
+	return before + text + after, draftTextLen(before + text)
+}
+
+func textWithCursor(value string, cursor int) string {
+	before, after := splitTextAt(value, cursor)
+	return before + "_" + after
+}
+
+func deleteTextBefore(value string, cursor int) (string, int) {
+	runes := []rune(value)
+	cursor = min(max(0, cursor), len(runes))
+	if cursor == 0 {
+		return value, 0
+	}
+	next := append(append([]rune{}, runes[:cursor-1]...), runes[cursor:]...)
+	return string(next), cursor - 1
 }
 
 func normalizeDraftContent(content string) string {

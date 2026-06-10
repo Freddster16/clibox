@@ -28,7 +28,7 @@ tab mailboxes  j/k move  enter full reader  R refresh  r reply  c compose  a arc
 - Mailbox rail for `Inbox`, `Unread`, `Archive`, `Sent`, `Drafts`, and `Trash`.
 - Wide-screen preview pane that follows the selected email.
 - Full reader for longer messages.
-- Compose and reply in your editor.
+- Compose and reply inside the TUI.
 - Review screen before sending.
 - Keyboard search, refresh, archive, and delete.
 - Newest mail loads first; older pages load only when you ask for them.
@@ -96,8 +96,8 @@ Fastmail, Proton Mail, and custom IMAP/SMTP domains.
 | `/` | Search the current mailbox |
 | `a` | Archive selected email |
 | `d` | Move selected email to Trash, with confirmation |
-| `r` | Reply in your editor |
-| `c` | Compose in your editor |
+| `r` | Reply in clibox |
+| `c` | Compose in clibox |
 | `t` | Choose a theme |
 | `?` | Show help |
 | `q` | Quit |
@@ -128,6 +128,21 @@ return to all inbox mail.
 | `r` | Reply |
 | `a` | Archive |
 | `d` | Delete |
+
+### Compose And Reply
+
+Compose and reply stay inside the TUI by default:
+
+| Key | Action |
+| --- | --- |
+| `Tab` | Move between `To`, `Subject`, and `Body` |
+| `Enter` | Move to the next field, or add a newline in `Body` |
+| `Ctrl+S` | Send |
+| `Ctrl+O` | Open the draft in your external editor |
+| `Esc` | Discard the draft |
+
+The external editor is optional. It uses `CLIBOX_EDITOR`, `VISUAL`, `EDITOR`,
+or `nvim` when you press `Ctrl+O`.
 
 ### Large Inboxes
 
@@ -163,7 +178,7 @@ clibox auth login --account gmail
 clibox accounts
 clibox sync --account gmail --mailbox INBOX
 
-# Editor and behavior options
+# Optional editor and behavior options
 clibox --editor "nvim"
 clibox --page-size 50
 clibox --confirm-delete=false
@@ -173,7 +188,7 @@ clibox --archive-folder "[Gmail]/All Mail"
 clibox --themes
 ```
 
-Editor selection also works through environment variables:
+The optional external editor also works through environment variables:
 
 ```sh
 EDITOR=nvim clibox

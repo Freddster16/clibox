@@ -376,13 +376,12 @@ func (m model) renderDraftReview(height int) string {
 	styles := m.activeTheme().styles
 	width := max(32, m.width)
 	summary := m.draft.Summary
-	subject := firstNonEmpty(strings.TrimSpace(summary.Subject), "(no subject)")
 
 	lines := []string{
 		styles.panelTitle.Render(m.draft.Kind.title()),
 		"",
 		styles.readerHeader.Width(width).Render("From: " + terminalSafeLine(firstNonEmpty(summary.From, "(backend default)"))),
-		styles.readerHeader.Width(width).Render("To: " + terminalSafeLine(firstNonEmpty(summary.To, "(missing recipient)"))),
+		m.renderDraftField(width, draftFieldTo, "To", summary.To),
 	}
 	if strings.TrimSpace(summary.Cc) != "" {
 		lines = append(lines, styles.readerHeader.Width(width).Render("Cc: "+terminalSafeLine(summary.Cc)))
@@ -391,7 +390,7 @@ func (m model) renderDraftReview(height int) string {
 		lines = append(lines, styles.readerHeader.Width(width).Render("Bcc: "+terminalSafeLine(summary.Bcc)))
 	}
 	lines = append(lines,
-		styles.readerHeader.Width(width).Render("Subject: "+terminalSafeLine(subject)),
+		m.renderDraftField(width, draftFieldSubject, "Subject", summary.Subject),
 		"",
 	)
 
@@ -401,7 +400,13 @@ func (m model) renderDraftReview(height int) string {
 		lines = append(lines, styles.unread.Width(width).Render(err.Error()), "")
 	}
 
-	body := firstNonEmpty(summary.Body, "(empty body)")
+	lines = append(lines, styles.readerHeader.Width(width).Render("Body"))
+	body := summary.Body
+	if m.draft.Focus == draftFieldBody {
+		body = textWithCursor(body, m.draft.Cursor)
+	} else {
+		body = firstNonEmpty(body, "(empty body)")
+	}
 	bodyLines := wrapText(body, width-2)
 	available := max(1, height-len(lines)-1)
 	if len(bodyLines) > available {
@@ -409,6 +414,25 @@ func (m model) renderDraftReview(height int) string {
 	}
 	lines = append(lines, styledLines(bodyLines, styles.readerBody, width)...)
 	return fitHeight(strings.Join(lines, "\n"), height)
+}
+
+func (m model) renderDraftField(width int, field draftField, label, value string) string {
+	styles := m.activeTheme().styles
+	display := value
+	if m.draft.Focus != field && strings.TrimSpace(display) == "" {
+		if field == draftFieldTo {
+			display = "(missing recipient)"
+		} else if field == draftFieldSubject {
+			display = "(no subject)"
+		}
+	}
+	text := label + ": " + terminalSafeLine(display)
+	style := styles.readerHeader
+	if m.draft.Focus == field {
+		text = label + ": " + terminalSafeLine(textWithCursor(value, m.draft.Cursor))
+		style = styles.selected
+	}
+	return style.Width(width).Render(truncate(text, width))
 }
 
 func (m model) renderMessage(width, height int, includePreview bool) string {
@@ -453,7 +477,7 @@ func (m model) renderFooter() string {
 	} else if m.mode == setupView {
 		hints = m.setupFooterHints()
 	} else if m.mode == draftReviewView {
-		hints = "s send  e edit  b discard  ? help"
+		hints = "draft  |  tab fields  enter next/newline  ctrl+s send  ctrl+o editor  esc discard  ? help"
 		if m.draft.Sending {
 			hints = "sending email..."
 		}
@@ -512,10 +536,11 @@ func (m model) overlayHelp(content string) string {
 		"j / k      scroll in reader",
 		"PgUp/PgDn  jump in reader",
 		"b / Esc    back to inbox",
-		"r          reply in $EDITOR",
-		"c          compose in $EDITOR",
-		"s          send reviewed draft",
-		"e          edit reviewed draft",
+		"r          reply in clibox",
+		"c          compose in clibox",
+		"Tab        move between draft fields",
+		"Ctrl+S     send draft",
+		"Ctrl+O     open draft in external editor",
 		"a          archive selected email",
 		"d          delete selected email with confirmation",
 		"/          search current mailbox",

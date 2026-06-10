@@ -424,38 +424,41 @@ func TestComposeDraftFlowReviewsAndSends(t *testing.T) {
 
 	next, editorCmd := updated.Update(prepared)
 	updated = next.(model)
-	if editorCmd == nil {
-		t.Fatal("expected prepared draft to open an editor command")
+	if editorCmd != nil {
+		t.Fatal("expected prepared draft to stay in the TUI")
 	}
 	if updated.draft.Path == "" {
 		t.Fatal("expected draft path to be stored")
 	}
-
-	edited := "From: Freddy <freddy@example.com>\nTo: alice@example.com\nSubject: Hello\n\nHi Alice.\n"
-	if err := os.WriteFile(updated.draft.Path, []byte(edited), 0o600); err != nil {
-		t.Fatalf("expected test draft write to succeed: %v", err)
-	}
-
-	next, _ = updated.Update(draftEditorFinishedMsg{path: updated.draft.Path, serial: updated.draft.Serial})
-	updated = next.(model)
 	if updated.mode != draftReviewView {
-		t.Fatalf("expected draft review view, got %v", updated.mode)
+		t.Fatalf("expected draft view, got %v", updated.mode)
 	}
-	if updated.draft.Summary.To != "alice@example.com" || updated.draft.Summary.Subject != "Hello" {
-		t.Fatalf("expected edited headers in summary, got %+v", updated.draft.Summary)
+	if updated.draft.Focus != draftFieldTo {
+		t.Fatalf("expected compose to focus To, got %v", updated.draft.Focus)
 	}
 
-	next, cmd = updated.Update(keyMsg("s"))
+	updated = pressKey(t, updated, "alice@example.com")
+	updated = pressKey(t, updated, "tab")
+	updated = pressKey(t, updated, "Hello")
+	updated = pressKey(t, updated, "tab")
+	updated = pressKey(t, updated, "Hi Alice.")
+	if updated.draft.Summary.To != "alice@example.com" || updated.draft.Summary.Subject != "Hello" || updated.draft.Summary.Body != "Hi Alice." {
+		t.Fatalf("expected TUI-edited draft summary, got %+v", updated.draft.Summary)
+	}
+
+	next, cmd = updated.Update(keyMsg("ctrl+s"))
 	updated = next.(model)
 	if cmd == nil || !updated.draft.Sending {
-		t.Fatal("expected s to start sending")
+		t.Fatal("expected Ctrl+S to start sending")
 	}
+
 	sent := cmd().(draftSentMsg)
 	next, _ = updated.Update(sent)
 	updated = next.(model)
 
-	if backend.sent != edited {
-		t.Fatalf("expected edited draft to be sent, got %q", backend.sent)
+	want := "From: Freddy <freddy@example.com>\nTo: alice@example.com\nSubject: Hello\n\nHi Alice.\n"
+	if backend.sent != want {
+		t.Fatalf("expected TUI-edited draft to be sent, got %q", backend.sent)
 	}
 	if updated.mode != inboxView {
 		t.Fatalf("expected compose send to return to inbox, got %v", updated.mode)
@@ -491,13 +494,14 @@ func TestReplyDraftFlowUsesSelectedMessage(t *testing.T) {
 
 	next, _ = updated.Update(prepared)
 	updated = next.(model)
-	next, _ = updated.Update(draftEditorFinishedMsg{path: updated.draft.Path, serial: updated.draft.Serial})
-	updated = next.(model)
 	if updated.mode != draftReviewView {
 		t.Fatalf("expected draft review view, got %v", updated.mode)
 	}
 	if updated.draft.Summary.To != "Alice <alice@example.com>" {
 		t.Fatalf("expected reply recipient in summary, got %+v", updated.draft.Summary)
+	}
+	if updated.draft.Focus != draftFieldBody {
+		t.Fatalf("expected reply to focus body, got %v", updated.draft.Focus)
 	}
 }
 
@@ -513,7 +517,7 @@ func TestDraftReviewRequiresRecipientBeforeSending(t *testing.T) {
 	}
 	m.draftSerial = 1
 
-	next, cmd := m.Update(keyMsg("s"))
+	next, cmd := m.Update(keyMsg("ctrl+s"))
 	updated := next.(model)
 	if cmd != nil {
 		t.Fatal("expected missing recipient to block send command")
@@ -1525,6 +1529,8 @@ func keyMsg(key string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyDelete}
 	case "ctrl+o":
 		return tea.KeyMsg{Type: tea.KeyCtrlO}
+	case "ctrl+s":
+		return tea.KeyMsg{Type: tea.KeyCtrlS}
 	case "ctrl+u":
 		return tea.KeyMsg{Type: tea.KeyCtrlU}
 	case "ctrl+w":
