@@ -2,57 +2,39 @@
 
 `clibox` is a keyboard-first email app for your terminal.
 
-It gives you the familiar mail workflow - inbox, reader, compose, reply,
-archive, delete, search, and refresh - without pulling you out of your shell,
-editor, tmux session, or coding flow.
+It gives you a familiar mail workflow in a TUI: inbox, unread, archive, sent,
+drafts, preview, full reader, compose, reply, search, refresh, archive, and
+delete. It is built for people who live in a shell, tmux session, or editor and
+do not want to switch apps just to handle mail.
 
 ```text
-clibox - personal@example.com                                      20 emails
----------------------------------------------------------------------------
+clibox                                                50 emails
+
 Mailboxes          Inbox                         Reader
+* Inbox 50       > Alice        Re: Design notes      From: Alice <alice@example.com>
+  Unread 2         GitHub       New issue assigned    Subject: Re: Design notes
+  Archive          Vercel       Deployment failed     Date: Today
+  Sent
+  Drafts                                           Hey Freddy,
 
-> INBOX       20   > Alice        Re: Design notes          10:34 AM
-  Archive          GitHub        New issue assigned        Yesterday
-  Sent             Vercel        Deployment failed         Yesterday
-  Drafts           Mom           Dinner                    Jun 6
+                                                    I looked at the prototype...
 
-                                                  From: Alice <alice@example.com>
-                                                  Subject: Re: Design notes
-                                                  Date: Sun Jun 7 10:34 AM
-
-                                                  Hey Freddy,
-
-                                                  I looked at the prototype...
-
-j/k move  enter read  R refresh  A account  r reply  c compose  a archive  / search  t themes  ? help  q quit
+tab mailboxes  j/k move  enter full reader  R refresh  r reply  c compose  a archive  ? help
 ```
 
-## What It Does
+## Features
 
-- Opens a real email inbox in a Bubble Tea terminal UI.
-- Shows the newest mail first and lets you load older pages when you need them.
-- Previews the selected email in the wide reader pane, then opens the full
-  reader with `Enter`.
-- Composes and replies in your editor using `CLIBOX_EDITOR`, `VISUAL`,
-  `EDITOR`, or `nvim`.
-- Sends only after a review screen.
-- Archives, deletes, searches, and refreshes from the keyboard.
-- Supports setup from inside the TUI.
-- Stores secrets in the OS credential store, not in the config file.
-- Supports themes: Nocturne, Ember, and Lagoon.
-
-## Status
-
-`clibox` is usable as a terminal inbox today.
-
-The default backend uses [Himalaya](https://github.com/pimalaya/himalaya) for
-compatibility. A native backend is also available behind `--mail-backend native`
-or `backend = "native"`. Native mode includes IMAP/SMTP, SQLite envelope/body
-cache, OS keychain secret storage, and OAuth plumbing for Gmail and Outlook.
-
-Gmail and Outlook native OAuth currently require you to provide your own
-desktop/native OAuth client ID. Public one-click OAuth still needs verified
-clibox provider client IDs before it can be the default for everyone.
+- Terminal mail UI powered by Bubble Tea.
+- Mailbox rail for `Inbox`, `Unread`, `Archive`, `Sent`, `Drafts`, and `Trash`.
+- Wide-screen preview pane that follows the selected email.
+- Full reader for longer messages.
+- Compose and reply in your editor.
+- Review screen before sending.
+- Keyboard search, refresh, archive, and delete.
+- Newest mail loads first; older pages load only when you ask for them.
+- Idle inbox refresh checks for new mail every 30 seconds.
+- Credentials are stored in the OS credential store, not in the config file.
+- Themes: Nocturne, Ember, and Lagoon.
 
 ## Install
 
@@ -62,93 +44,102 @@ Install or update the latest `main` build:
 curl -fsSL https://raw.githubusercontent.com/Freddster16/clibox/main/install.sh | sh
 ```
 
-Then run:
+Then start the app:
 
 ```sh
 clibox
 ```
 
-The installer checks for Go and the Himalaya compatibility backend. If Homebrew
-is already installed, it can use Homebrew to install missing dependencies. It
-will not install Homebrew itself unless you explicitly opt in:
+The installer checks for Go and the default Himalaya compatibility backend. If
+Homebrew is already installed, the installer can use it for missing
+dependencies. It will not install Homebrew unless you opt in:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Freddster16/clibox/main/install.sh | CLIBOX_INSTALL_HOMEBREW=1 sh
 ```
 
-If you only want the native backend and do not want Himalaya installed:
+If you only want the native backend and do not want the installer to install
+Himalaya:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Freddster16/clibox/main/install.sh | CLIBOX_SKIP_HIMALAYA=1 sh
 ```
 
+Developer install from source:
+
+```sh
+git clone https://github.com/Freddster16/clibox.git
+cd clibox
+go install .
+```
+
 ## First Run
 
-1. Start the app:
-
-   ```sh
-   clibox
-   ```
-
+1. Run `clibox`.
 2. If setup is needed, enter your email address.
-
-3. Follow the provider guidance shown in the TUI.
-
-4. Paste your provider app password or complete browser login when prompted.
-
+3. Follow the provider guidance in the TUI.
+4. Paste your app password or complete browser login when prompted.
 5. Land in your inbox.
 
 `clibox` detects common providers such as Gmail, iCloud, Outlook, Yahoo,
-Fastmail, Proton Mail, and custom domains. App passwords and refresh tokens are
-stored in the OS credential store.
+Fastmail, Proton Mail, and custom IMAP/SMTP domains.
 
-## Daily Use
+## How To Use The TUI
+
+### Message List
 
 | Key | Action |
 | --- | --- |
-| `Tab` | Focus the mailbox rail; when focused, move to the next mailbox |
-| `j` / `k` | Move in the inbox, choose a mailbox, or scroll in the reader |
-| `Enter` | Open the selected email in the full reader or open the focused mailbox |
-| `PgUp` / `PgDn` | Jump through an open email |
-| `Home` / `End` | Jump to the top or bottom of an open email |
-| `b` / `Esc` | Go back |
+| `j` / `k` | Move down or up |
+| `Enter` | Open selected email in the full reader |
+| `R` | Refresh now |
+| `/` | Search the current mailbox |
+| `a` | Archive selected email |
+| `d` | Move selected email to Trash, with confirmation |
 | `r` | Reply in your editor |
 | `c` | Compose in your editor |
-| `s` | Send the reviewed draft |
-| `e` | Edit the reviewed draft again |
-| `a` | Archive the selected email |
-| `d` | Move the selected email to Trash, with confirmation |
-| `/` | Search the current mailbox |
-| `R` | Refresh the current mailbox |
-| `A` | Add or update an account |
 | `t` | Choose a theme |
 | `?` | Show help |
-| `q` | Quit or close the current view |
+| `q` | Quit |
 
-### Mailbox Navigation
+On wide terminals, the right pane previews the selected email automatically.
+Press `Enter` only when you want the full reader.
 
-Use the mailbox rail on the left side of the TUI to move between folders:
+### Mailboxes
+
+Use the left mailbox rail to move between folders:
 
 1. Press `Tab` to focus the mailbox rail.
-2. Press `Tab`, `j`, or `k` to choose `Inbox`, `Unread`, `Archive`, `Sent`,
-   `Drafts`, or `Trash`.
-3. Press `Enter` to open the selected mailbox or filter.
-4. Press `Esc`, `b`, or the right arrow to return focus to the message list.
+2. Press `Tab`, `j`, or `k` to choose a mailbox.
+3. Press `Enter` to open it.
+4. Press `Esc`, `b`, or the right arrow to return to the message list.
 
-`Unread` is an unread-only view of your inbox. From `Unread`, press `Esc` to go
-back to all inbox mail.
+`Unread` is an unread-only view of your inbox. From `Unread`, press `Esc` to
+return to all inbox mail.
 
-Large inboxes are handled page by page. The newest page appears first so the app
-feels responsive. When you reach the bottom of the loaded list, press `j` again
-to load older mail. `--page-size` changes the request size; it is not an inbox
-limit.
+### Reader
 
-On wide terminals, the right-hand reader pane previews the selected email
-automatically. Press `Enter` only when you want to open that email in the full
-reader. The app checks the newest page for new mail every 30 seconds while the
-inbox is idle; press `R` to refresh immediately.
+| Key | Action |
+| --- | --- |
+| `j` / `k` | Scroll |
+| `PgUp` / `PgDn` | Jump by page |
+| `Home` / `End` | Jump to top or bottom |
+| `b` / `Esc` | Back to inbox |
+| `r` | Reply |
+| `a` | Archive |
+| `d` | Delete |
 
-## Useful Commands
+### Large Inboxes
+
+`clibox` loads the newest page first so the inbox opens quickly. When you reach
+the bottom of the loaded list, press `j` again to load older mail. The
+`--page-size` option changes how many messages each request asks for; it is not
+an inbox limit.
+
+The app checks the newest page for new mail every 30 seconds while the inbox is
+idle. Press `R` any time to refresh immediately.
+
+## Common Commands
 
 ```sh
 # Open the TUI
@@ -158,10 +149,11 @@ clibox
 clibox --account personal
 clibox --mailbox INBOX
 
-# Use the native backend
+# Pick the native backend
 clibox --mail-backend native --account gmail
 
-# Check setup without opening the TUI
+# Check the connection without opening the TUI
+clibox doctor
 clibox doctor --account personal
 clibox doctor --mail-backend native --verbose --account gmail
 
@@ -177,7 +169,7 @@ clibox --page-size 50
 clibox --confirm-delete=false
 clibox --archive-folder "[Gmail]/All Mail"
 
-# Show available themes
+# Themes
 clibox --themes
 ```
 
@@ -189,10 +181,23 @@ VISUAL="code --wait" clibox
 CLIBOX_EDITOR="vim -n" clibox
 ```
 
-## Native OAuth
+## Backends
 
-Native Gmail or Outlook OAuth is available for developers and testers with their
-own OAuth client IDs.
+`clibox` has two mail backends:
+
+- `himalaya`: default compatibility backend using
+  [Himalaya](https://github.com/pimalaya/himalaya).
+- `native`: built-in IMAP/SMTP backend with SQLite envelope/body cache, OS
+  keychain secret storage, and OAuth plumbing for Gmail and Outlook.
+
+Use native mode with:
+
+```sh
+clibox --mail-backend native --account gmail
+```
+
+Native Gmail and Outlook OAuth currently require your own desktop/native OAuth
+client ID:
 
 ```sh
 clibox auth add --email you@gmail.com --account gmail
@@ -202,11 +207,8 @@ export CLIBOX_OUTLOOK_CLIENT_ID="your-microsoft-public-client-id"
 
 clibox auth login --account gmail
 clibox sync --account gmail --mailbox INBOX
-clibox --mail-backend native --account gmail --mailbox INBOX
+clibox --mail-backend native --account gmail
 ```
-
-OAuth login uses the system browser, a local loopback callback, PKCE, and state
-validation. Refresh tokens are stored in the OS keychain.
 
 ## Configuration
 
@@ -248,10 +250,11 @@ himalaya_binary = "/opt/homebrew/bin/himalaya"
 Credential-like config keys are rejected on purpose, including `password`,
 `access_token`, `refresh_token`, `id_token`, and `client_secret`.
 
-## Security Notes
+## Security
 
 - Email credentials are not written to `config.toml`.
-- Native mode stores app passwords and refresh tokens in the OS credential store.
+- Native mode stores app passwords and refresh tokens in the OS credential
+  store.
 - Native mode stores account metadata and cached mail data in SQLite.
 - Draft files are temporary owner-only files.
 - Draft content is sent to the backend over stdin, not as command-line
