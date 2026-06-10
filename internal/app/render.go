@@ -352,17 +352,17 @@ func (m model) renderDraftReview(height int) string {
 	lines := []string{
 		styles.panelTitle.Render(m.draft.Kind.title()),
 		"",
-		styles.readerHeader.Width(width).Render("From: " + firstNonEmpty(summary.From, "(backend default)")),
-		styles.readerHeader.Width(width).Render("To: " + firstNonEmpty(summary.To, "(missing recipient)")),
+		styles.readerHeader.Width(width).Render("From: " + terminalSafeLine(firstNonEmpty(summary.From, "(backend default)"))),
+		styles.readerHeader.Width(width).Render("To: " + terminalSafeLine(firstNonEmpty(summary.To, "(missing recipient)"))),
 	}
 	if strings.TrimSpace(summary.Cc) != "" {
-		lines = append(lines, styles.readerHeader.Width(width).Render("Cc: "+summary.Cc))
+		lines = append(lines, styles.readerHeader.Width(width).Render("Cc: "+terminalSafeLine(summary.Cc)))
 	}
 	if strings.TrimSpace(summary.Bcc) != "" {
-		lines = append(lines, styles.readerHeader.Width(width).Render("Bcc: "+summary.Bcc))
+		lines = append(lines, styles.readerHeader.Width(width).Render("Bcc: "+terminalSafeLine(summary.Bcc)))
 	}
 	lines = append(lines,
-		styles.readerHeader.Width(width).Render("Subject: "+subject),
+		styles.readerHeader.Width(width).Render("Subject: "+terminalSafeLine(subject)),
 		"",
 	)
 
@@ -395,9 +395,9 @@ func (m model) renderMessage(width, height int, includePreview bool) string {
 	msg := m.selectedMessage()
 	lines := []string{
 		styles.panelTitle.Render("Reader"),
-		styles.readerHeader.Width(width).Render("From: " + msg.From + " <" + msg.Email + ">"),
-		styles.readerHeader.Width(width).Render("Subject: " + msg.Subject),
-		styles.readerHeader.Width(width).Render("Date: " + msg.Date),
+		styles.readerHeader.Width(width).Render("From: " + terminalSafeLine(msg.From) + " <" + terminalSafeLine(msg.Email) + ">"),
+		styles.readerHeader.Width(width).Render("Subject: " + terminalSafeLine(msg.Subject)),
+		styles.readerHeader.Width(width).Render("Date: " + terminalSafeLine(msg.Date)),
 		styles.readerBody.Width(width).Render(""),
 	}
 

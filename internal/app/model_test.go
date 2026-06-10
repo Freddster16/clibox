@@ -909,6 +909,56 @@ func TestOpenURLRejectsNonWebSchemes(t *testing.T) {
 	}
 }
 
+func TestTerminalSafeTextRemovesControlSequences(t *testing.T) {
+	input := "Alice\x1b[2J\x1b]52;c;SGVsbG8=\a red\x1b[31m text\x1b[0m\u202e done\tok\nnext"
+	got := terminalSafeText(input)
+	if got != "Alice red text done ok\nnext" {
+		t.Fatalf("unexpected sanitized text: %q", got)
+	}
+	for _, unsafe := range []string{"\x1b", "\a", "]52", "[2J", "[31m", "\u202e"} {
+		if strings.Contains(got, unsafe) {
+			t.Fatalf("expected %q to be removed from %q", unsafe, got)
+		}
+	}
+	if got := terminalSafeLine("subject\nspoofed\x1b[2J"); got != "subject spoofed" {
+		t.Fatalf("unexpected sanitized line: %q", got)
+	}
+}
+
+func TestInboxAndReaderSanitizeMailText(t *testing.T) {
+	m := newTestModel()
+	m.width = 100
+	m.height = 30
+	m.messages = []message{{
+		ID:         "1",
+		From:       "Mallory\x1b]52;c;SGVsbG8=\a",
+		Email:      "mallory@example.com",
+		Subject:    "Reset\nspoof\x1b[2Jscreen",
+		Date:       "Now\x1b[31m",
+		Preview:    "Preview\x1b[5n",
+		Body:       "Hello\x1b]0;owned\a world",
+		BodyLoaded: true,
+	}}
+
+	inbox := m.View()
+	for _, unsafe := range []string{"]52", "[2J", "[31m", "[5n", "]0;owned"} {
+		if strings.Contains(inbox, unsafe) {
+			t.Fatalf("inbox view leaked terminal control payload %q in %q", unsafe, inbox)
+		}
+	}
+
+	m.mode = readerView
+	reader := m.View()
+	for _, unsafe := range []string{"]52", "[2J", "[31m", "[5n", "]0;owned"} {
+		if strings.Contains(reader, unsafe) {
+			t.Fatalf("reader view leaked terminal control payload %q in %q", unsafe, reader)
+		}
+	}
+	if strings.Contains(reader, "Reset\nspoof") {
+		t.Fatalf("reader view preserved unsafe subject newline: %q", reader)
+	}
+}
+
 func TestGmailSecretNormalizationRemovesSpaces(t *testing.T) {
 	provider := detectProvider("freddy@gmail.com")
 	got := provider.normalizeSecret(" abcd efgh ijkl mnop ")

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,6 +67,42 @@ func TestNativeStoreCachesAccountEnvelopesAndBodiesWithoutCredentialColumns(t *t
 	body, ok, err := store.body(context.Background(), "gmail", "INBOX", "101")
 	if err != nil || !ok || body != "hello body" {
 		t.Fatalf("unexpected cached body ok=%v body=%q err=%v", ok, body, err)
+	}
+}
+
+func TestNativeStoreDatabaseFileIsPrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "clibox.db")
+	store, err := openNativeStore(path)
+	if err != nil {
+		t.Fatalf("expected native store to open: %v", err)
+	}
+	if err := store.close(); err != nil {
+		t.Fatalf("expected native store to close: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("expected native store file to exist: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("native store database mode = %04o, want 0600", got)
+	}
+}
+
+func TestNativeStoreRejectsSymlinkDatabase(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.db")
+	link := filepath.Join(dir, "clibox.db")
+	if err := os.WriteFile(target, []byte("not sqlite"), 0o600); err != nil {
+		t.Fatalf("expected target file: %v", err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks are not available: %v", err)
+	}
+
+	_, err := openNativeStore(link)
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("expected symlink rejection, got %v", err)
 	}
 }
 

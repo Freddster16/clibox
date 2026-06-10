@@ -50,6 +50,9 @@ func openNativeStore(path string) (*nativeStore, error) {
 	if err := os.MkdirAll(filepath.Dir(resolved), 0o700); err != nil {
 		return nil, fmt.Errorf("could not create clibox state directory: %w", err)
 	}
+	if err := secureNativeStoreFile(resolved); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", resolved)
 	if err != nil {
 		return nil, fmt.Errorf("could not open clibox state database: %w", err)
@@ -61,6 +64,36 @@ func openNativeStore(path string) (*nativeStore, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+func secureNativeStoreFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("could not inspect clibox state database: %w", err)
+	}
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("clibox state database must not be a symlink: %s", path)
+	}
+	parent, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("could not inspect clibox state directory: %w", err)
+	}
+	if parent.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("clibox state directory must not be group- or world-writable: %s", filepath.Dir(path))
+	}
+
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600) // #nosec G304 -- state path is explicit user configuration after symlink and shared-directory checks.
+	if err != nil {
+		return fmt.Errorf("could not create clibox state database: %w", err)
+	}
+	if err := file.Chmod(0o600); err != nil {
+		closeErr := file.Close()
+		return errors.Join(fmt.Errorf("could not secure clibox state database: %w", err), closeErr)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("could not close clibox state database: %w", err)
+	}
+	return nil
 }
 
 func (s *nativeStore) close() error {
