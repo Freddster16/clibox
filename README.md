@@ -154,169 +154,55 @@ an inbox limit.
 The app checks the newest page for new mail every 30 seconds while the inbox is
 idle. Press `R` any time to refresh immediately.
 
-## Common Commands
+## Useful Commands
 
 ```sh
 # Open the TUI
 clibox
 
-# Choose an account or mailbox
+# Check your mail setup without opening the TUI
+clibox doctor
+
+# Use a specific account or mailbox
 clibox --account personal
 clibox --mailbox INBOX
 
-# Pick the native backend
-clibox --mail-backend native --account gmail
-
-# Check the connection without opening the TUI
-clibox doctor
-clibox doctor --account personal
-clibox doctor --mail-backend native --verbose --account gmail
-
-# Native account helpers
-clibox auth add --email you@gmail.com --account gmail
-clibox auth login --account gmail
-clibox accounts
-clibox sync --account gmail --mailbox INBOX
-
-# Optional editor and behavior options
-clibox --editor "nvim"
+# Tune large-inbox loading
 clibox --page-size 50
-clibox --confirm-delete=false
-clibox --archive-folder "[Gmail]/All Mail"
 
 # Themes
 clibox --themes
 ```
 
-The optional external editor also works through environment variables:
+## Advanced
 
-```sh
-EDITOR=nvim clibox
-VISUAL="code --wait" clibox
-CLIBOX_EDITOR="vim -n" clibox
-```
-
-## Backends
-
-`clibox` has two mail backends:
-
-- `himalaya`: default compatibility backend using
-  [Himalaya](https://github.com/pimalaya/himalaya).
-- `native`: built-in IMAP/SMTP backend with SQLite envelope/body cache, OS
-  keychain secret storage, and OAuth plumbing for Gmail and Outlook.
-
-Use native mode with:
+The default backend uses [Himalaya](https://github.com/pimalaya/himalaya). A
+native IMAP/SMTP backend is also available:
 
 ```sh
 clibox --mail-backend native --account gmail
 ```
 
 Native Gmail and Outlook OAuth currently require your own desktop/native OAuth
-client ID:
+client ID. Native account helpers are available when you need them:
 
 ```sh
 clibox auth add --email you@gmail.com --account gmail
-
-export CLIBOX_GMAIL_CLIENT_ID="your-google-desktop-client-id"
-export CLIBOX_OUTLOOK_CLIENT_ID="your-microsoft-public-client-id"
-
 clibox auth login --account gmail
-clibox sync --account gmail --mailbox INBOX
-clibox --mail-backend native --account gmail
+clibox accounts
 ```
 
-## Configuration
-
-Config lives at:
-
-```text
-~/.config/clibox/config.toml
-```
-
-Minimal example:
-
-```toml
-backend = "native" # or "himalaya"
-account = "personal"
-mailbox = "INBOX"
-archive_folder = "Archive"
-editor = "nvim"
-confirm_delete = true
-
-[accounts.gmail]
-provider = "gmail"
-email = "you@gmail.com"
-mailbox = "INBOX"
-archive_folder = "[Gmail]/All Mail"
-sync_policy = "headers"
-editor = "nvim"
-```
-
-Command-line flags override config values for that launch.
-
-For compatibility with older configs, `backend = "/path/to/himalaya"` is treated
-as a Himalaya binary path. New configs should prefer:
-
-```toml
-backend = "himalaya"
-himalaya_binary = "/opt/homebrew/bin/himalaya"
-```
-
-Credential-like config keys are rejected on purpose, including `password`,
-`access_token`, `refresh_token`, `id_token`, and `client_secret`.
-
-## Security
-
-- Email credentials are not written to `config.toml`.
-- Native mode stores app passwords and refresh tokens in the OS credential
-  store.
-- Native mode stores account metadata and cached mail data in SQLite.
-- Draft files are temporary owner-only files.
-- Draft content is sent to the backend over stdin, not as command-line
-  arguments.
+Config lives at `~/.config/clibox/config.toml`. Credentials are not written to
+that file; clibox stores secrets in the OS credential store.
 
 ## Development
 
-Run locally:
-
 ```sh
 go run .
-```
-
-Run checks:
-
-```sh
 go test ./...
 go build ./...
 go vet ./...
 ```
-
-Useful development commands:
-
-```sh
-go run . doctor
-go run . doctor --mail-backend native --verbose
-go run . --themes
-```
-
-The app is written in Go with:
-
-- [Bubble Tea](https://github.com/charmbracelet/bubbletea) for the TUI loop.
-- [Lip Gloss](https://github.com/charmbracelet/lipgloss) for terminal styling.
-- [Himalaya](https://github.com/pimalaya/himalaya) for the compatibility
-  backend.
-- `github.com/emersion/go-imap`, `go-smtp`, `go-message`, and `go-sasl` for
-  native mail.
-- SQLite for the native cache.
-- OS keychain storage through `github.com/zalando/go-keyring`.
-
-## Current Limits
-
-- Public one-click Gmail/Outlook OAuth is not enabled yet.
-- HTML email is reduced to readable text.
-- Attachments are not a primary workflow yet.
-- Calendar, AI, PGP, S/MIME, and plugin support are out of scope for the current
-  pass.
 
 ## License
 
