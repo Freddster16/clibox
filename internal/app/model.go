@@ -258,6 +258,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.serial != m.loadSerial {
 			return m, nil
 		}
+		wasLoadingMore := m.loadingMore
+		wasAtEnd := len(m.messages) == 0 || m.cursor >= len(m.messages)-1
+		beforeCount := len(m.messages)
 		m.loading = false
 		m.loadingMore = false
 		if msg.err != nil {
@@ -302,8 +305,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.messages = mergeMessagePage(m.messages, msg.messages)
 		}
+		addedCount := len(m.messages) - beforeCount
 		if m.cursor >= len(m.messages) {
 			m.cursor = max(0, len(m.messages)-1)
+		}
+		if wasLoadingMore && wasAtEnd && addedCount > 0 {
+			m.cursor = len(m.messages) - 1
 		}
 
 		if msg.done {
@@ -324,6 +331,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.loadedAll = false
 		m.nextPage = msg.page + 1
+		if wasLoadingMore && wasAtEnd && msg.page > 1 {
+			if addedCount == 0 {
+				m.loadedAll = true
+				m.nextPage = 0
+				m = m.withStatus(fmt.Sprintf("loaded %d emails from %s; stopped because the next page had no new mail", len(m.messages), m.scopeLabel()))
+				return m.previewSelectedMessage()
+			}
+			m.loadingMore = true
+			m = m.withStatus(fmt.Sprintf("loaded %d emails from %s; loading older mail...", len(m.messages), m.scopeLabel()))
+			m, previewCmd := m.previewSelectedMessage()
+			nextPageCmd := m.loadInboxPage(m.nextPage, m.loadSerial)
+			if previewCmd != nil {
+				return m, tea.Batch(previewCmd, nextPageCmd)
+			}
+			return m, nextPageCmd
+		}
 		m = m.withStatus(fmt.Sprintf("loaded %d emails from %s; press j at the bottom for older mail", len(m.messages), m.scopeLabel()))
 		return m.previewSelectedMessage()
 	case inboxLoadedMsg:

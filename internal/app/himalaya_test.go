@@ -179,6 +179,51 @@ func TestHimalayaBackendLoadsAllPages(t *testing.T) {
 	}
 }
 
+func TestHimalayaFallbackIDsDoNotCollideAcrossPages(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stdout: []byte(`[
+				{"subject":"One","from":"Alice <alice@example.com>"},
+				{"subject":"Two","from":"Bob <bob@example.com>"}
+			]`),
+		},
+		{
+			stdout: []byte(`[
+				{"subject":"Three","from":"Cora <cora@example.com>"}
+			]`),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:   "himalaya",
+		mailbox:  "INBOX",
+		pageSize: 2,
+		runner:   runner,
+	}
+
+	first, done, err := backend.ListEnvelopePage(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("expected first page to load: %v", err)
+	}
+	if done {
+		t.Fatal("expected full first page to leave pagination open")
+	}
+	second, done, err := backend.ListEnvelopePage(context.Background(), 2)
+	if err != nil {
+		t.Fatalf("expected second page to load: %v", err)
+	}
+	if !done {
+		t.Fatal("expected partial second page to finish pagination")
+	}
+
+	merged := mergeMessagePage(first, second)
+	if len(merged) != 3 {
+		t.Fatalf("expected fallback ids to keep all pages, got %+v", merged)
+	}
+	if merged[0].ID != "1" || merged[1].ID != "2" || merged[2].ID != "3" {
+		t.Fatalf("unexpected fallback ids: %+v", merged)
+	}
+}
+
 func TestHimalayaBackendOmitsPageSizeWhenUnset(t *testing.T) {
 	runner := &fakeCommandRunner{results: []fakeCommandResult{
 		{

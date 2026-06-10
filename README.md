@@ -149,9 +149,9 @@ or `nvim` when you press `Ctrl+O`.
 ### Large Inboxes
 
 `clibox` loads the newest page first so the inbox opens quickly. When you reach
-the bottom of the loaded list, press `j` again to load older mail. The
-`--page-size` option changes how many messages each request asks for; it is not
-an inbox limit.
+the bottom of the loaded list, press `j` again to load older mail; clibox keeps
+fetching older pages until the mailbox is complete. The `--page-size` option
+changes how many messages each request asks for; it is not an inbox limit.
 
 The app checks the newest page for new mail every 30 seconds while the inbox is
 idle. Press `R` any time to refresh immediately.

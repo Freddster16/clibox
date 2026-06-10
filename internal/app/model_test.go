@@ -623,6 +623,69 @@ func TestPagedInboxShowsFirstPageThenLoadsOlderMail(t *testing.T) {
 	}
 }
 
+func TestPagedInboxKeepsLoadingOlderMailFromBottom(t *testing.T) {
+	backend := &pagedBackend{pages: [][]message{
+		{
+			{ID: "1", From: "Alice", Subject: "First"},
+			{ID: "2", From: "Bob", Subject: "Second"},
+		},
+		{
+			{ID: "3", From: "Cora", Subject: "Third"},
+			{ID: "4", From: "Dax", Subject: "Fourth"},
+		},
+		{
+			{ID: "5", From: "Eli", Subject: "Fifth"},
+		},
+	}}
+	m := NewWithOptions(Options{backend: backend})
+
+	first := inboxPageFromCmd(t, m.Init())
+	next, _ := m.Update(first)
+	updated := next.(model)
+	updated.cursor = len(updated.messages) - 1
+
+	next, cmd := updated.Update(keyMsg("j"))
+	updated = next.(model)
+	if !updated.loadingMore {
+		t.Fatal("expected bottom j to start loading older mail")
+	}
+
+	second := inboxPageFromCmd(t, cmd)
+	next, cmd = updated.Update(second)
+	updated = next.(model)
+	if len(updated.messages) != 4 || updated.messages[3].ID != "4" {
+		t.Fatalf("expected second page to append and follow the bottom, got cursor=%d messages=%+v", updated.cursor, updated.messages)
+	}
+	if updated.cursor != 3 {
+		t.Fatalf("expected cursor to follow appended older mail, got %d", updated.cursor)
+	}
+	if !updated.loadingMore {
+		t.Fatal("expected app to keep loading older mail")
+	}
+	if cmd == nil {
+		t.Fatal("expected automatic third page load")
+	}
+
+	third := inboxPageFromCmd(t, cmd)
+	next, cmd = updated.Update(third)
+	updated = next.(model)
+	if len(updated.messages) != 5 || updated.messages[4].ID != "5" {
+		t.Fatalf("expected all pages to be loaded, got %+v", updated.messages)
+	}
+	if updated.loadingMore {
+		t.Fatal("expected loadingMore to stop after final page")
+	}
+	if !updated.loadedAll {
+		t.Fatal("expected loadedAll after final page")
+	}
+	if cmd != nil {
+		t.Fatal("expected no command after final page")
+	}
+	if len(backend.calls) != 3 || backend.calls[0] != 1 || backend.calls[1] != 2 || backend.calls[2] != 3 {
+		t.Fatalf("expected calls 1,2,3; got %v", backend.calls)
+	}
+}
+
 func TestPageRefreshDedupesAndPreservesSelection(t *testing.T) {
 	m := NewWithOptions(Options{backend: &pagedBackend{}})
 	m.messages = []message{
@@ -1216,6 +1279,28 @@ func TestWideInboxViewFitsTerminalWidth(t *testing.T) {
 		if width := lipgloss.Width(line); width > m.width {
 			t.Fatalf("view line %d width = %d, want <= %d in %q", i, width, m.width, line)
 		}
+	}
+}
+
+func TestPreviewHeadersDoNotWrapLongSubjects(t *testing.T) {
+	m := newTestModel()
+	m.messages = []message{{
+		ID:         "1",
+		From:       "LinkedIn",
+		Email:      "jobs@example.com",
+		Subject:    strings.Repeat("junior software engineer ", 8),
+		Date:       "2026-06-10",
+		Body:       "Body text",
+		BodyLoaded: true,
+	}}
+
+	preview := m.renderPreview(32, 8)
+	lines := strings.Split(preview, "\n")
+	if len(lines) != 8 {
+		t.Fatalf("expected preview to fit requested height, got %d lines in %q", len(lines), preview)
+	}
+	if !strings.Contains(lines[3], "Date:") {
+		t.Fatalf("expected long subject to stay on one header row, got preview:\n%s", preview)
 	}
 }
 

@@ -237,7 +237,7 @@ func (h himalayaBackend) listEnvelopePage(ctx context.Context, page int, query s
 	for _, args := range h.listCandidates(page, query) {
 		stdout, stderr, err := h.runner.Run(ctx, h.binary, args)
 		if err == nil {
-			messages, parseErr := parseHimalayaMessages(stdout)
+			messages, parseErr := parseHimalayaMessagesPage(stdout, page, h.pageSize)
 			if parseErr != nil {
 				return nil, false, fmt.Errorf("email backend returned unreadable data: %w", parseErr)
 			}
@@ -512,6 +512,23 @@ func (r osCommandRunner) run(ctx context.Context, program string, args []string,
 }
 
 func parseHimalayaMessages(data []byte) ([]message, error) {
+	return parseHimalayaMessagesWithFallback(data, func(index int) string {
+		return strconv.Itoa(index + 1)
+	})
+}
+
+func parseHimalayaMessagesPage(data []byte, page, pageSize int) ([]message, error) {
+	page = max(1, page)
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	base := (page - 1) * pageSize
+	return parseHimalayaMessagesWithFallback(data, func(index int) string {
+		return strconv.Itoa(base + index + 1)
+	})
+}
+
+func parseHimalayaMessagesWithFallback(data []byte, fallbackID func(int) string) ([]message, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, errors.New("empty output")
 	}
@@ -526,12 +543,12 @@ func parseHimalayaMessages(data []byte) ([]message, error) {
 	envelopes := envelopeObjects(raw)
 	messages := make([]message, 0, len(envelopes))
 	for _, envelope := range envelopes {
-		messages = append(messages, messageFromEnvelope(envelope, len(messages)+1))
+		messages = append(messages, messageFromEnvelope(envelope, fallbackID(len(messages))))
 	}
 	return messages, nil
 }
 
-func messageFromEnvelope(envelope map[string]any, fallbackID int) message {
+func messageFromEnvelope(envelope map[string]any, fallbackID string) message {
 	flags := flagList(value(envelope, "flags"))
 	fromName, fromEmail := address(value(envelope, "from", "sender"))
 	fromName = firstNonEmpty(fromName, text(envelope, "from_name", "fromName", "sender_name", "senderName"), fromEmail, "Unknown")
@@ -543,7 +560,7 @@ func messageFromEnvelope(envelope map[string]any, fallbackID int) message {
 	}
 
 	return message{
-		ID:      firstNonEmpty(text(envelope, "id", "uid", "message_id", "messageId", "message-id"), strconv.Itoa(fallbackID)),
+		ID:      firstNonEmpty(text(envelope, "id", "uid", "message_id", "messageId", "message-id"), fallbackID),
 		From:    fromName,
 		Email:   fromEmail,
 		Subject: firstNonEmpty(text(envelope, "subject"), "(no subject)"),

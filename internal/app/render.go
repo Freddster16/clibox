@@ -448,9 +448,9 @@ func (m model) renderMessage(width, height int, includePreview bool) string {
 	msg := m.selectedMessage()
 	lines := []string{
 		styles.panelTitle.Render("Reader"),
-		styles.readerHeader.Width(width).Render("From: " + terminalSafeLine(msg.From) + " <" + terminalSafeLine(msg.Email) + ">"),
-		styles.readerHeader.Width(width).Render("Subject: " + terminalSafeLine(msg.Subject)),
-		styles.readerHeader.Width(width).Render("Date: " + terminalSafeLine(msg.Date)),
+		renderReaderHeaderLine(styles.readerHeader, width, "From: "+terminalSafeLine(msg.From)+" <"+terminalSafeLine(msg.Email)+">"),
+		renderReaderHeaderLine(styles.readerHeader, width, "Subject: "+terminalSafeLine(msg.Subject)),
+		renderReaderHeaderLine(styles.readerHeader, width, "Date: "+terminalSafeLine(msg.Date)),
 		styles.readerBody.Width(width).Render(""),
 	}
 
@@ -466,6 +466,10 @@ func (m model) renderMessage(width, height int, includePreview bool) string {
 	}
 	lines = append(lines, styledLines(bodyLines, styles.readerBody, width)...)
 	return fitHeight(strings.Join(lines, "\n"), height)
+}
+
+func renderReaderHeaderLine(style lipgloss.Style, width int, text string) string {
+	return style.Width(width).Render(truncate(text, max(1, width-2)))
 }
 
 func (m model) renderFooter() string {
