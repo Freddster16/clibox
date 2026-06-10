@@ -54,6 +54,7 @@ type inboxPageLoadedMsg struct {
 type messageBodyLoadedMsg struct {
 	id     string
 	body   string
+	images []messageImage
 	serial int
 	err    error
 }
@@ -408,7 +409,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m.withStatus("could not preview email: " + oneLine(msg.err.Error())), nil
 		}
-		m = m.setMessageBody(msg.id, msg.body)
+		m = m.setMessageContent(msg.id, messageContent{Body: msg.body, Images: msg.images})
 		if m.mode == readerView {
 			return m.withStatus("email loaded"), nil
 		}
@@ -1161,6 +1162,10 @@ func (m model) closeReader() model {
 
 func (m model) loadMessageBody(backend messageBodyBackend, msg message, serial int) tea.Cmd {
 	return func() tea.Msg {
+		if contentBackend, ok := backend.(messageContentBackend); ok {
+			content, err := contentBackend.ReadMessageContent(context.Background(), msg)
+			return messageBodyLoadedMsg{id: msg.ID, body: content.Body, images: content.Images, serial: serial, err: err}
+		}
 		body, err := backend.ReadMessage(context.Background(), msg)
 		return messageBodyLoadedMsg{id: msg.ID, body: body, serial: serial, err: err}
 	}
@@ -1174,9 +1179,14 @@ func (m model) selectedMessage() message {
 }
 
 func (m model) setMessageBody(id, body string) model {
+	return m.setMessageContent(id, messageContent{Body: body})
+}
+
+func (m model) setMessageContent(id string, content messageContent) model {
 	for i := range m.messages {
 		if m.messages[i].ID == id {
-			m.messages[i].Body = body
+			m.messages[i].Body = content.Body
+			m.messages[i].Images = content.Images
 			m.messages[i].BodyLoaded = true
 			m.messages[i].BodyError = ""
 			break
@@ -1189,6 +1199,7 @@ func (m model) setMessageBodyError(id, message string) model {
 	for i := range m.messages {
 		if m.messages[i].ID == id {
 			m.messages[i].Body = ""
+			m.messages[i].Images = nil
 			m.messages[i].BodyLoaded = false
 			m.messages[i].BodyError = message
 			break
@@ -1224,7 +1235,7 @@ func (m model) maxReaderOffset() int {
 		return 0
 	}
 	bodyHeight := m.readerPageSize()
-	lines := wrapText(m.messageBodyText(m.selectedMessage(), false), max(16, m.width-2))
+	lines := m.renderMessageBodyLines(m.selectedMessage(), false, max(32, m.width))
 	return max(0, len(lines)-bodyHeight)
 }
 

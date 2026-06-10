@@ -1,6 +1,9 @@
 package app
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNativePageWindowUsesRemoteTotalForDone(t *testing.T) {
 	start, end, done := nativePageWindow(120, 1, 50)
@@ -33,5 +36,37 @@ func TestNativeEnvelopeSeqRangeUsesRemoteTotalForDone(t *testing.T) {
 	_, _, done, ok = nativeEnvelopeSeqRange(120, 4, 50)
 	if !done || ok {
 		t.Fatalf("page beyond total = done %v ok %v, want true false", done, ok)
+	}
+}
+
+func TestExtractReadableMessageContentIncludesImages(t *testing.T) {
+	raw := strings.Join([]string{
+		"MIME-Version: 1.0",
+		`Content-Type: multipart/mixed; boundary="clibox-test"`,
+		"",
+		"--clibox-test",
+		"Content-Type: text/plain; charset=utf-8",
+		"",
+		"Hello with image.",
+		"--clibox-test",
+		"Content-Type: image/png",
+		`Content-Disposition: inline; filename="pixel.png"`,
+		"Content-Transfer-Encoding: base64",
+		"",
+		"aGVsbG8=",
+		"--clibox-test--",
+		"",
+	}, "\r\n")
+
+	content := extractReadableMessageContent([]byte(raw))
+	if content.Body != "Hello with image." {
+		t.Fatalf("unexpected body: %q", content.Body)
+	}
+	if len(content.Images) != 1 {
+		t.Fatalf("expected one image, got %+v", content.Images)
+	}
+	image := content.Images[0]
+	if image.Name != "pixel.png" || image.ContentType != "image/png" || string(image.Data) != "hello" {
+		t.Fatalf("unexpected image: %+v", image)
 	}
 }

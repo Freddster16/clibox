@@ -23,6 +23,11 @@ import (
 	"github.com/emersion/go-smtp"
 )
 
+const (
+	maxMessageImages    = 1
+	maxInlineImageBytes = 2 << 20
+)
+
 type nativeBackend struct {
 	account        string
 	mailbox        string
@@ -276,29 +281,35 @@ func (n nativeBackend) searchOrListEnvelopePage(ctx context.Context, page int, q
 }
 
 func (n nativeBackend) ReadMessage(ctx context.Context, msg message) (string, error) {
-	store, account, mailbox, err := n.openStoreAndAccount(ctx)
+	content, err := n.ReadMessageContent(ctx, msg)
 	if err != nil {
 		return "", err
+	}
+	return content.Body, nil
+}
+
+func (n nativeBackend) ReadMessageContent(ctx context.Context, msg message) (messageContent, error) {
+	store, account, mailbox, err := n.openStoreAndAccount(ctx)
+	if err != nil {
+		return messageContent{}, err
 	}
 	defer store.close()
 
 	uid, err := messageIDUint(msg)
 	if err != nil {
-		return "", err
-	}
-	if body, ok, err := store.body(ctx, account.Name, mailbox, msg.ID); err != nil {
-		return "", err
-	} else if ok {
-		return body, nil
+		return messageContent{}, err
 	}
 
 	client, err := n.connectIMAP(ctx, account)
 	if err != nil {
-		return "", err
+		if body, ok, cacheErr := store.body(ctx, account.Name, mailbox, msg.ID); cacheErr == nil && ok {
+			return messageContent{Body: body}, nil
+		}
+		return messageContent{}, err
 	}
 	defer client.Logout()
 	if _, err := client.Select(mailbox, true); err != nil {
-		return "", fmt.Errorf("could not open %s: %w", mailbox, err)
+		return messageContent{}, fmt.Errorf("could not open %s: %w", mailbox, err)
 	}
 
 	seqset := new(imap.SeqSet)
@@ -317,18 +328,18 @@ func (n nativeBackend) ReadMessage(ctx context.Context, msg message) (string, er
 		}
 		raw, err = io.ReadAll(io.LimitReader(literal, 20<<20))
 		if err != nil {
-			return "", err
+			return messageContent{}, err
 		}
 	}
 	if err := <-done; err != nil {
-		return "", fmt.Errorf("could not read email body: %w", err)
+		return messageContent{}, fmt.Errorf("could not read email body: %w", err)
 	}
-	body := extractReadableMessageBody(raw)
-	if strings.TrimSpace(body) == "" {
-		body = "(empty message)"
+	content := extractReadableMessageContent(raw)
+	if strings.TrimSpace(content.Body) == "" {
+		content.Body = "(empty message)"
 	}
-	_ = store.saveBody(ctx, account.Name, mailbox, msg.ID, body)
-	return body, nil
+	_ = store.saveBody(ctx, account.Name, mailbox, msg.ID, content.Body)
+	return content, nil
 }
 
 func (n nativeBackend) ArchiveMessage(ctx context.Context, msg message) error {
@@ -749,15 +760,20 @@ func (c xoauth2Client) Next(_ []byte) ([]byte, error) {
 }
 
 func extractReadableMessageBody(raw []byte) string {
+	return extractReadableMessageContent(raw).Body
+}
+
+func extractReadableMessageContent(raw []byte) messageContent {
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return ""
+		return messageContent{}
 	}
 	reader, err := mailmessage.CreateReader(bytes.NewReader(raw))
 	if err != nil {
-		return normalizeMessageBody(raw)
+		return messageContent{Body: normalizeMessageBody(raw)}
 	}
 	var plainParts []string
 	var htmlParts []string
+	var images []messageImage
 	for {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
@@ -773,24 +789,61 @@ func extractReadableMessageBody(raw []byte) string {
 		if readErr != nil {
 			continue
 		}
-		switch header := part.Header.(type) {
-		case *mailmessage.InlineHeader:
-			mediaType, _, _ := header.ContentType()
-			switch strings.ToLower(mediaType) {
-			case "text/plain", "":
-				plainParts = append(plainParts, normalizeMessageBody(body))
-			case "text/html":
-				htmlParts = append(htmlParts, htmlToText(string(body)))
+		mediaType, name := partContentInfo(part.Header)
+		switch strings.ToLower(mediaType) {
+		case "text/plain", "":
+			plainParts = append(plainParts, normalizeMessageBody(body))
+		case "text/html":
+			htmlBody := string(body)
+			htmlParts = append(htmlParts, htmlToText(htmlBody))
+		default:
+			if strings.HasPrefix(strings.ToLower(mediaType), "image/") {
+				images = appendMessageImage(images, messageImage{
+					Name:        firstNonEmpty(name, "inline image"),
+					ContentType: mediaType,
+					Data:        body,
+				})
 			}
 		}
 	}
 	if text := strings.TrimSpace(strings.Join(nonEmpty(plainParts...), "\n\n")); text != "" {
-		return text
+		return messageContent{Body: text, Images: images}
 	}
 	if text := strings.TrimSpace(strings.Join(nonEmpty(htmlParts...), "\n\n")); text != "" {
-		return text
+		return messageContent{Body: text, Images: images}
 	}
-	return normalizeMessageBody(raw)
+	return messageContent{Body: normalizeMessageBody(raw), Images: images}
+}
+
+func partContentInfo(header any) (string, string) {
+	switch header := header.(type) {
+	case *mailmessage.InlineHeader:
+		mediaType, params, _ := header.ContentType()
+		_, dispositionParams, _ := header.ContentDisposition()
+		return strings.ToLower(mediaType), firstNonEmpty(dispositionParams["filename"], params["name"], headerText(header.Header, "Content-Description"))
+	case *mailmessage.AttachmentHeader:
+		mediaType, params, _ := header.ContentType()
+		filename, _ := header.Filename()
+		return strings.ToLower(mediaType), firstNonEmpty(filename, params["name"], headerText(header.Header, "Content-Description"))
+	}
+	return "", ""
+}
+
+func headerText(header gomessage.Header, key string) string {
+	value, err := header.Text(key)
+	if err != nil {
+		return ""
+	}
+	return value
+}
+
+func appendMessageImage(images []messageImage, image messageImage) []messageImage {
+	if len(images) >= maxMessageImages || len(image.Data) == 0 || len(image.Data) > maxInlineImageBytes {
+		return images
+	}
+	image.Name = terminalSafeLine(firstNonEmpty(image.Name, "image"))
+	image.ContentType = strings.ToLower(firstNonEmpty(image.ContentType, "image"))
+	return append(images, image)
 }
 
 func htmlToText(input string) string {

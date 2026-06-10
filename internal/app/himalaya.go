@@ -34,6 +34,10 @@ type messageBodyBackend interface {
 	ReadMessage(context.Context, message) (string, error)
 }
 
+type messageContentBackend interface {
+	ReadMessageContent(context.Context, message) (messageContent, error)
+}
+
 type messageActionBackend interface {
 	ArchiveMessage(context.Context, message) error
 	DeleteMessage(context.Context, message) error

@@ -28,6 +28,8 @@ tab mailboxes  j/k move  enter full reader  R refresh  r reply  c compose  a arc
 - Mailbox rail for `Inbox`, `Unread`, `Archive`, `Sent`, `Drafts`, and `Trash`.
 - Wide-screen preview pane that follows the selected email.
 - Full reader for longer messages.
+- Lightweight inline image rendering in the full reader for native-backend
+  embedded images, with a visible image label fallback.
 - Compose and reply inside the TUI.
 - Review screen before sending.
 - Keyboard search, refresh, archive, and delete.
@@ -106,6 +108,11 @@ On wide terminals, the right pane previews the selected email automatically.
 Long subjects, headers, and message bodies are constrained to the terminal width
 so moving through the list does not leave wrapped or stale rows behind. Press
 `Enter` only when you want the full reader.
+
+When the native backend loads an email with embedded image parts, the full
+reader shows the image inline when the terminal supports it. The inbox preview
+stays text-only, and clibox does not fetch remote images. Terminals without
+inline-image support still show an `Image` label for each loaded image.
 
 ### Mailboxes
 

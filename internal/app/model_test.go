@@ -1304,6 +1304,50 @@ func TestPreviewHeadersDoNotWrapLongSubjects(t *testing.T) {
 	}
 }
 
+func TestReaderRendersLoadedImages(t *testing.T) {
+	m := newTestModel()
+	m.mode = readerView
+	m.width = 100
+	m.height = 28
+	m.messages = []message{{
+		ID:         "1",
+		From:       "Alice",
+		Email:      "alice@example.com",
+		Subject:    "Image",
+		Date:       "Today",
+		Body:       "Photo attached.",
+		Images:     []messageImage{{Name: "pixel.png", ContentType: "image/png", Data: []byte("hello")}},
+		BodyLoaded: true,
+	}}
+
+	reader := m.View()
+	if !strings.Contains(reader, "Image 1: pixel.png") {
+		t.Fatalf("expected image fallback label, got:\n%s", reader)
+	}
+	if !strings.Contains(reader, "]1337;File=inline=1;") {
+		t.Fatalf("expected inline image sequence, got:\n%s", reader)
+	}
+}
+
+func TestWidePreviewDoesNotRenderImages(t *testing.T) {
+	m := newTestModel()
+	m.messages = []message{{
+		ID:         "1",
+		From:       "Alice",
+		Email:      "alice@example.com",
+		Subject:    "Image",
+		Date:       "Today",
+		Body:       "Photo attached.",
+		Images:     []messageImage{{Name: "pixel.png", ContentType: "image/png", Data: []byte("hello")}},
+		BodyLoaded: true,
+	}}
+
+	preview := m.renderPreview(80, 16)
+	if strings.Contains(preview, "]1337;File=inline=1;") || strings.Contains(preview, "Image 1:") {
+		t.Fatalf("expected preview to stay text-only, got:\n%s", preview)
+	}
+}
+
 func TestInboxAndReaderSanitizeMailText(t *testing.T) {
 	m := newTestModel()
 	m.width = 100
