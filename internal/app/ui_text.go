@@ -5,6 +5,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func scrollStart(cursor, visible, total int) int {
@@ -65,9 +66,11 @@ func fitFrame(value string, width, height int) string {
 		lines = lines[:height]
 	}
 	for i, line := range lines {
-		if lineWidth := lipgloss.Width(line); lineWidth < width {
-			lines[i] = line + strings.Repeat(" ", width-lineWidth)
+		line = ansi.Truncate(line, width, "")
+		if lineWidth := ansi.StringWidth(line); lineWidth < width {
+			line += strings.Repeat(" ", width-lineWidth)
 		}
+		lines[i] = line
 	}
 	for len(lines) < height {
 		lines = append(lines, strings.Repeat(" ", width))

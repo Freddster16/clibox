@@ -1184,6 +1184,41 @@ func TestFitFramePadsEveryRenderedLine(t *testing.T) {
 	}
 }
 
+func TestFitFrameTruncatesOverwideStyledLines(t *testing.T) {
+	styled := lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Render("abcdef")
+	got := fitFrame(styled+"\nxy", 5, 2)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d in %q", len(lines), got)
+	}
+	for i, line := range lines {
+		if width := lipgloss.Width(line); width != 5 {
+			t.Fatalf("line %d width = %d, want 5 in %q", i, width, got)
+		}
+	}
+}
+
+func TestWideInboxViewFitsTerminalWidth(t *testing.T) {
+	m := newTestModel()
+	m.width = 100
+	m.height = 16
+	m.messages = []message{{
+		ID:         "1",
+		From:       "Very Long Sender Name",
+		Email:      "sender@example.com",
+		Subject:    strings.Repeat("long subject ", 20),
+		Date:       "2026-06-10 19:47+00:00",
+		Body:       strings.Repeat("long body ", 40),
+		BodyLoaded: true,
+	}}
+
+	for i, line := range strings.Split(m.View(), "\n") {
+		if width := lipgloss.Width(line); width > m.width {
+			t.Fatalf("view line %d width = %d, want <= %d in %q", i, width, m.width, line)
+		}
+	}
+}
+
 func TestInboxAndReaderSanitizeMailText(t *testing.T) {
 	m := newTestModel()
 	m.width = 100

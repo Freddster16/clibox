@@ -103,7 +103,9 @@ Fastmail, Proton Mail, and custom IMAP/SMTP domains.
 | `q` | Quit |
 
 On wide terminals, the right pane previews the selected email automatically.
-Press `Enter` only when you want the full reader.
+Long subjects, headers, and message bodies are constrained to the terminal width
+so moving through the list does not leave wrapped or stale rows behind. Press
+`Enter` only when you want the full reader.
 
 ### Mailboxes
 
@@ -182,6 +184,10 @@ native IMAP/SMTP backend is also available:
 ```sh
 clibox --mail-backend native --account gmail
 ```
+
+The Himalaya compatibility backend normalizes read output before rendering, so
+raw message headers and MIME part markers are not shown in the inbox preview or
+reader.
 
 Native Gmail and Outlook OAuth currently require your own desktop/native OAuth
 client ID. Native account helpers are available when you need them:

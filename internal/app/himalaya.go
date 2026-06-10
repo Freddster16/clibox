@@ -556,7 +556,113 @@ func messageFromEnvelope(envelope map[string]any, fallbackID int) message {
 func normalizeMessageBody(data []byte) string {
 	body := strings.ReplaceAll(string(data), "\r\n", "\n")
 	body = strings.ReplaceAll(body, "\r", "\n")
-	return strings.TrimSpace(body)
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return ""
+	}
+	lines := stripHimalayaReadDecorations(strings.Split(body, "\n"))
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func stripHimalayaReadDecorations(lines []string) []string {
+	start := skipHimalayaReadMarkers(lines, 0)
+	if end, ok := leadingMailHeaderBlock(lines[start:]); ok {
+		start += end
+		start = skipHimalayaReadMarkers(lines, start)
+	}
+
+	out := make([]string, 0, len(lines)-start)
+	for _, line := range lines[start:] {
+		if isHimalayaReadMarker(strings.TrimSpace(line)) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return trimBlankLines(out)
+}
+
+func skipHimalayaReadMarkers(lines []string, start int) int {
+	for start < len(lines) {
+		line := strings.TrimSpace(lines[start])
+		if line == "" || isHimalayaReadMarker(line) {
+			start++
+			continue
+		}
+		break
+	}
+	return start
+}
+
+func leadingMailHeaderBlock(lines []string) (int, bool) {
+	seen := map[string]struct{}{}
+	count := 0
+	lastWasHeader := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			if count == 0 {
+				continue
+			}
+			return i + 1, len(seen) >= 2
+		}
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			if lastWasHeader {
+				continue
+			}
+			return i, len(seen) >= 2
+		}
+		name, ok := mailHeaderName(trimmed)
+		if !ok {
+			return i, len(seen) >= 2
+		}
+		seen[name] = struct{}{}
+		count++
+		lastWasHeader = true
+	}
+	return len(lines), len(seen) >= 2
+}
+
+func mailHeaderName(line string) (string, bool) {
+	name, _, ok := strings.Cut(line, ":")
+	if !ok {
+		return "", false
+	}
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return "", false
+	}
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			continue
+		}
+		return "", false
+	}
+	switch name {
+	case "from", "to", "cc", "bcc", "reply-to", "sender", "subject", "date",
+		"message-id", "in-reply-to", "references", "mime-version", "content-type",
+		"content-transfer-encoding", "delivered-to", "return-path", "received",
+		"dkim-signature", "authentication-results", "list-id", "list-unsubscribe",
+		"precedence":
+		return name, true
+	default:
+		return "", false
+	}
+}
+
+func isHimalayaReadMarker(line string) bool {
+	return strings.HasPrefix(line, "<#part ") && strings.HasSuffix(line, ">")
+}
+
+func trimBlankLines(lines []string) []string {
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	end := len(lines)
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	return lines[start:end]
 }
 
 func envelopeObjects(raw any) []map[string]any {
