@@ -466,6 +466,39 @@ func TestHimalayaBackendReadsMessageBody(t *testing.T) {
 	}
 }
 
+func TestNormalizeMessageBodyStripsReadHeadersAndPartMarkers(t *testing.T) {
+	raw := []byte(strings.Join([]string{
+		"From: ATTACK SHARK <support@attackshark.com>",
+		"From: ATTACK SHARK <support@attackshark.com>",
+		"From: LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>",
+		"Subject: junior software engineer: Orchia - Junior Software Development Engineer and more",
+		"Date: 2026-06-10 19:47+00:00",
+		"<#part type=text/html>",
+		"Your job alert for junior software engineer in United States",
+		"",
+		"<#part type=text/plain>",
+		"View jobs",
+	}, "\n"))
+
+	body := normalizeMessageBody(raw)
+	if strings.Contains(body, "From: ATTACK SHARK") || strings.Contains(body, "Subject:") || strings.Contains(body, "<#part") {
+		t.Fatalf("expected read decorations to be stripped, got %q", body)
+	}
+	want := "Your job alert for junior software engineer in United States\n\nView jobs"
+	if body != want {
+		t.Fatalf("unexpected normalized body:\nwant %q\ngot  %q", want, body)
+	}
+}
+
+func TestNormalizeMessageBodyPreservesBodyStartingWithHeaderLikeLine(t *testing.T) {
+	raw := []byte("From: the recruiting desk\n\nThanks for applying.")
+
+	body := normalizeMessageBody(raw)
+	if body != "From: the recruiting desk\n\nThanks for applying." {
+		t.Fatalf("expected header-like body text to be preserved, got %q", body)
+	}
+}
+
 func TestHimalayaBackendReadFallsBackToV2Shape(t *testing.T) {
 	runner := &fakeCommandRunner{results: []fakeCommandResult{
 		{
