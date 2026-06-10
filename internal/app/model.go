@@ -89,10 +89,28 @@ type messageActionDoneMsg struct {
 	err    error
 }
 
+type mailboxViewFilter int
+
+const (
+	allMailFilter mailboxViewFilter = iota
+	unreadMailFilter
+)
+
+type mailboxRailEntry struct {
+	Label   string
+	Mailbox string
+	Filter  mailboxViewFilter
+	Count   string
+}
+
 type model struct {
 	messages          []message
 	backend           inboxBackend
 	cursor            int
+	mailboxCursor     int
+	mailboxFocused    bool
+	mailboxFilter     mailboxViewFilter
+	mailboxFolders    map[string]string
 	mode              viewMode
 	showHelp          bool
 	showThemes        bool
@@ -164,13 +182,18 @@ func NewWithOptions(options Options) model {
 	if options.ConfirmDelete != nil {
 		deletePrompt = *options.ConfirmDelete
 	}
+	mailboxFolders := mergeFolders(setupProvider.Folders)
+	if strings.TrimSpace(options.ArchiveFolder) != "" {
+		mailboxFolders["archive"] = strings.TrimSpace(options.ArchiveFolder)
+	}
 
-	return model{
+	m := model{
 		backend:           backend,
 		loading:           true,
 		status:            status,
 		account:           strings.TrimSpace(options.Account),
 		mailbox:           strings.TrimSpace(options.Mailbox),
+		mailboxFolders:    mailboxFolders,
 		setupEmail:        setupEmail,
 		setupAccount:      setupAccount,
 		setupProvider:     setupProvider,
@@ -181,6 +204,8 @@ func NewWithOptions(options Options) model {
 		deletePrompt:      deletePrompt,
 		editor:            strings.TrimSpace(options.Editor),
 	}
+	m.mailboxCursor = m.activeMailboxEntryIndex()
+	return m
 }
 
 func (m model) Init() tea.Cmd {
@@ -253,6 +278,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.done {
 			m.loadedAll = true
 			if len(m.messages) == 0 {
+				if m.mailboxFilter == unreadMailFilter {
+					return m.withStatus("No unread emails found in " + m.mailboxLabel()), nil
+				}
 				if strings.TrimSpace(m.searchQuery) != "" {
 					return m.withStatus("No emails matched " + m.searchQuery + " in " + m.mailboxLabel()), nil
 				}
@@ -293,6 +321,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.messages = msg.messages
 		if len(m.messages) == 0 {
 			m.cursor = 0
+			if m.mailboxFilter == unreadMailFilter {
+				return m.withStatus("No unread emails found in " + m.mailboxLabel()), nil
+			}
 			if strings.TrimSpace(m.searchQuery) != "" {
 				return m.withStatus("No emails matched " + m.searchQuery + " in " + m.mailboxLabel()), nil
 			}
@@ -324,9 +355,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.account = strings.TrimSpace(msg.account)
 		m.setupAccount = m.account
 		m.setupSecret = ""
+		m.mailboxFolders = mergeFolders(m.setupProvider.Folders)
 		if backend, ok := m.backend.(accountSetupBackend); ok {
 			m.backend = backend.WithAccount(m.account)
 		}
+		m.mailboxCursor = m.activeMailboxEntryIndex()
 		m.mode = inboxView
 		m.loading = true
 		m.loadingMore = false
@@ -471,17 +504,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDraftReview(msg)
 		}
 
+		if m.mode == inboxView && m.mailboxFocused {
+			return m.updateMailboxRail(msg)
+		}
+
 		switch key {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "q":
 			if m.mode == readerView {
-				m.mode = inboxView
-				return m, nil
+				return m.closeReader(), nil
 			}
 			return m, tea.Quit
 		case "?":
 			m.showHelp = true
+		case "tab", "left":
+			if m.mode == inboxView {
+				m.mailboxFocused = true
+				m.mailboxCursor = m.activeMailboxEntryIndex()
+				return m.withStatus("mailboxes focused; j/k choose, Enter opens, Tab returns to messages"), nil
+			}
 		case "up", "k":
 			if m.mode == readerView {
 				m.readerOffset = max(0, m.readerOffset-1)
@@ -524,10 +566,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "b", "esc":
 			if m.mode == readerView {
-				m.mode = inboxView
-				m.status = ""
+				return m.closeReader(), nil
 			} else if m.mode == inboxView && strings.TrimSpace(m.searchQuery) != "" {
 				return m.clearSearch()
+			} else if m.mode == inboxView && m.mailboxFilter == unreadMailFilter {
+				return m.clearMailboxFilter()
 			}
 		case "r":
 			if m.mode == readerView {
@@ -560,6 +603,82 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m model) updateMailboxRail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "?":
+		m.showHelp = true
+	case "tab", "right", "esc", "b":
+		m.mailboxFocused = false
+		return m.withStatus("message list focused"), nil
+	case "up", "k":
+		return m.moveMailboxCursor(-1), nil
+	case "down", "j":
+		return m.moveMailboxCursor(1), nil
+	case "enter":
+		return m.activateMailboxEntry()
+	case "R":
+		m.mailboxFocused = false
+		return m.refreshInbox("refreshing " + m.scopeLabel() + "...")
+	case "t":
+		m.showThemes = true
+		m.themeCursor = m.theme
+		m.themeBeforePicker = m.theme
+		m.status = ""
+	}
+	return m, nil
+}
+
+func (m model) moveMailboxCursor(delta int) model {
+	entries := m.mailboxEntries()
+	if len(entries) == 0 {
+		m.mailboxCursor = 0
+		return m
+	}
+	m.mailboxCursor = (m.mailboxCursor + delta) % len(entries)
+	if m.mailboxCursor < 0 {
+		m.mailboxCursor += len(entries)
+	}
+	m.status = "mailbox: " + entries[m.mailboxCursor].Label
+	return m
+}
+
+func (m model) activateMailboxEntry() (model, tea.Cmd) {
+	entries := m.mailboxEntries()
+	if len(entries) == 0 {
+		return m.withStatus("No mailbox selected"), nil
+	}
+	if m.mailboxCursor < 0 || m.mailboxCursor >= len(entries) {
+		m.mailboxCursor = m.activeMailboxEntryIndex()
+	}
+	entry := entries[m.mailboxCursor]
+	return m.openMailbox(entry.Mailbox, entry.Filter, entry.Label)
+}
+
+func (m model) openMailbox(mailbox string, filter mailboxViewFilter, label string) (model, tea.Cmd) {
+	if m.action.Running {
+		return m.withStatus("finish the current email action first"), nil
+	}
+	mailbox = firstNonEmpty(mailbox, "INBOX")
+	if !strings.EqualFold(m.mailboxLabel(), mailbox) {
+		switcher, ok := m.backend.(mailboxSwitchBackend)
+		if !ok {
+			return m.withStatus("this backend cannot switch mailboxes yet"), nil
+		}
+		m.backend = switcher.WithMailbox(mailbox)
+	}
+
+	m.mailbox = mailbox
+	m.mailboxFilter = filter
+	m.mailboxFocused = false
+	m.mailboxCursor = m.activeMailboxEntryIndex()
+	m.searching = false
+	m.searchInput = ""
+	m.searchQuery = ""
+	return m.reloadMailbox("loading " + label + "...")
 }
 
 func (m model) startDraft(kind draftKind) (model, tea.Cmd) {
@@ -691,15 +810,22 @@ func (m model) loadInbox() tea.Cmd {
 		if strings.TrimSpace(m.searchQuery) != "" {
 			messages = filterMessages(messages, m.searchQuery)
 		}
+		if m.mailboxFilter == unreadMailFilter {
+			messages = filterUnreadMessages(messages)
+		}
 		return inboxLoadedMsg{messages: messages, err: err}
 	}
 }
 
 func (m model) loadInboxPage(page, serial int) tea.Cmd {
 	query := m.searchQuery
+	filter := m.mailboxFilter
 	if backend, ok := m.backend.(searchablePagedInboxBackend); ok {
 		return func() tea.Msg {
 			messages, done, err := backend.SearchEnvelopePage(context.Background(), page, query)
+			if filter == unreadMailFilter {
+				messages = filterUnreadMessages(messages)
+			}
 			return inboxPageLoadedMsg{messages: messages, page: page, serial: serial, done: done, err: err}
 		}
 	}
@@ -707,6 +833,9 @@ func (m model) loadInboxPage(page, serial int) tea.Cmd {
 		if backend, ok := m.backend.(pagedInboxBackend); ok {
 			return func() tea.Msg {
 				messages, done, err := backend.ListEnvelopePage(context.Background(), page)
+				if filter == unreadMailFilter {
+					messages = filterUnreadMessages(messages)
+				}
 				return inboxPageLoadedMsg{messages: messages, page: page, serial: serial, done: done, err: err}
 			}
 		}
@@ -738,6 +867,19 @@ func (m model) openSelectedMessage() (model, tea.Cmd) {
 	m.loadingMessageID = msg.ID
 	m.messages[index].BodyError = ""
 	return m.withStatus("Loading email..."), m.loadMessageBody(backend, msg, m.messageLoadSerial)
+}
+
+func (m model) closeReader() model {
+	m.mode = inboxView
+	m.status = ""
+	m.readerOffset = 0
+	if m.mailboxFilter == unreadMailFilter {
+		m.messages = filterUnreadMessages(m.messages)
+		if m.cursor >= len(m.messages) {
+			m.cursor = max(0, len(m.messages)-1)
+		}
+	}
+	return m
 }
 
 func (m model) loadMessageBody(backend messageBodyBackend, msg message, serial int) tea.Cmd {
@@ -824,7 +966,7 @@ func (m model) withStatus(text string) model {
 
 func (m model) accountLabel() string {
 	if strings.TrimSpace(m.account) != "" {
-		return m.account
+		return terminalSafeLine(m.account)
 	}
 	return "default account"
 }
@@ -836,18 +978,86 @@ func (m model) mailboxLabel() string {
 	return "INBOX"
 }
 
-func (m model) scopeLabel() string {
-	if strings.TrimSpace(m.searchQuery) != "" {
-		return fmt.Sprintf("%s search %q", m.mailboxLabel(), m.searchQuery)
+func (m model) mailboxEntries() []mailboxRailEntry {
+	folders := mergeFolders(m.mailboxFolders)
+	currentUnread := m.unreadMessageCount()
+	return []mailboxRailEntry{
+		{Label: "Inbox", Mailbox: firstNonEmpty(folders["inbox"], "INBOX"), Filter: allMailFilter, Count: m.mailboxEntryCount(firstNonEmpty(folders["inbox"], "INBOX"), allMailFilter)},
+		{Label: "Unread", Mailbox: firstNonEmpty(folders["inbox"], "INBOX"), Filter: unreadMailFilter, Count: countLabel(currentUnread)},
+		{Label: "Archive", Mailbox: firstNonEmpty(folders["archive"], "Archive"), Filter: allMailFilter, Count: m.mailboxEntryCount(firstNonEmpty(folders["archive"], "Archive"), allMailFilter)},
+		{Label: "Sent", Mailbox: firstNonEmpty(folders["sent"], "Sent"), Filter: allMailFilter, Count: m.mailboxEntryCount(firstNonEmpty(folders["sent"], "Sent"), allMailFilter)},
+		{Label: "Drafts", Mailbox: firstNonEmpty(folders["drafts"], "Drafts"), Filter: allMailFilter, Count: m.mailboxEntryCount(firstNonEmpty(folders["drafts"], "Drafts"), allMailFilter)},
+		{Label: "Trash", Mailbox: firstNonEmpty(folders["trash"], "Trash"), Filter: allMailFilter, Count: m.mailboxEntryCount(firstNonEmpty(folders["trash"], "Trash"), allMailFilter)},
+	}
+}
+
+func (m model) mailboxEntryCount(mailbox string, filter mailboxViewFilter) string {
+	if !m.mailboxEntryActive(mailbox, filter) {
+		return ""
+	}
+	return countLabel(len(m.messages))
+}
+
+func countLabel(count int) string {
+	return fmt.Sprintf("%d", count)
+}
+
+func (m model) unreadMessageCount() int {
+	count := 0
+	for _, msg := range m.messages {
+		if msg.Unread {
+			count++
+		}
+	}
+	return count
+}
+
+func (m model) activeMailboxEntryIndex() int {
+	entries := m.mailboxEntries()
+	for i, entry := range entries {
+		if m.mailboxEntryActive(entry.Mailbox, entry.Filter) {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m model) mailboxEntryActive(mailbox string, filter mailboxViewFilter) bool {
+	return m.mailboxFilter == filter && sameMailboxName(m.mailboxLabel(), mailbox)
+}
+
+func sameMailboxName(left, right string) bool {
+	return strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right))
+}
+
+func (m model) currentMailboxTitle() string {
+	for _, entry := range m.mailboxEntries() {
+		if m.mailboxEntryActive(entry.Mailbox, entry.Filter) {
+			return entry.Label
+		}
 	}
 	return m.mailboxLabel()
 }
 
+func (m model) scopeLabel() string {
+	scope := m.currentMailboxTitle()
+	if m.mailboxFilter == unreadMailFilter && !sameMailboxName(scope, "Unread") {
+		scope = "Unread"
+	}
+	if strings.TrimSpace(m.searchQuery) != "" {
+		return fmt.Sprintf("%s search %q", scope, m.searchQuery)
+	}
+	return scope
+}
+
 func (m model) inboxTitle() string {
+	if strings.TrimSpace(m.searchQuery) != "" && m.mailboxFilter == unreadMailFilter {
+		return fmt.Sprintf("Unread search: %s", m.searchQuery)
+	}
 	if strings.TrimSpace(m.searchQuery) != "" {
 		return fmt.Sprintf("Search: %s", m.searchQuery)
 	}
-	return "Inbox"
+	return m.currentMailboxTitle()
 }
 
 func (m model) editorLabel() string {

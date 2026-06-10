@@ -15,7 +15,8 @@ func TestBuildHimalayaAccountBlockUsesBackendConfig(t *testing.T) {
 		Provider:    detectProvider("freddy@gmail.com"),
 		PageSize:    25,
 	}
-	block := buildHimalayaAccountBlock(setup, credentialRef{Command: "security find-generic-password -a freddy@gmail.com -s clibox:gmail:freddy@gmail.com -w"}, true)
+	service := credentialServiceName(setup)
+	block := buildHimalayaAccountBlock(setup, credentialRef{Command: macOSKeychainFindCommand("/usr/bin/security", setup, service)}, true)
 
 	for _, want := range []string{
 		"[accounts.gmail]",
@@ -26,7 +27,7 @@ func TestBuildHimalayaAccountBlockUsesBackendConfig(t *testing.T) {
 		"backend.type = \"imap\"",
 		"backend.host = \"imap.gmail.com\"",
 		"backend.port = 993",
-		"backend.auth.cmd = \"security find-generic-password -a freddy@gmail.com -s clibox:gmail:freddy@gmail.com -w\"",
+		"backend.auth.cmd = \"'/usr/bin/security' find-generic-password -a 'freddy@gmail.com' -s 'clibox:gmail:freddy@gmail.com' -w\"",
 		"message.send.backend.type = \"smtp\"",
 		"message.send.backend.host = \"smtp.gmail.com\"",
 		"message.send.backend.port = 587",
@@ -55,8 +56,53 @@ func TestSecretToolCredentialArgsDoNotExposeSecret(t *testing.T) {
 	if strings.Contains(args, setup.Secret) {
 		t.Fatalf("secret leaked into secret-tool argv: %q", args)
 	}
-	if !strings.Contains(secretToolLookupCommand(setup, credentialServiceName(setup)), "secret-tool lookup") {
+	if !strings.Contains(secretToolLookupCommand("/usr/bin/secret-tool", setup, credentialServiceName(setup)), "/usr/bin/secret-tool") {
 		t.Fatalf("expected secret-tool lookup command")
+	}
+}
+
+func TestCredentialCommandRejectsBareHelperName(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "capture")
+	helper := filepath.Join(dir, "security")
+	script := "#!/bin/sh\ncat > " + shellQuote(capture) + "\n"
+	if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
+		t.Fatalf("expected fake helper write: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if _, err := runCredentialCommand("security", nil, "secret\n"); err == nil {
+		t.Fatal("expected bare credential helper name to be rejected")
+	}
+	if _, err := os.Stat(capture); !os.IsNotExist(err) {
+		t.Fatalf("expected PATH helper not to run, stat err: %v", err)
+	}
+}
+
+func TestCredentialCommandAllowsAbsoluteHelperPath(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "capture")
+	helper := filepath.Join(dir, "helper")
+	script := "#!/bin/sh\ncat > " + shellQuote(capture) + "\n"
+	if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
+		t.Fatalf("expected helper write: %v", err)
+	}
+
+	if _, err := runCredentialCommand(helper, nil, "secret\n"); err != nil {
+		t.Fatalf("expected absolute helper to run: %v", err)
+	}
+	data, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatalf("expected helper capture: %v", err)
+	}
+	if string(data) != "secret\n" {
+		t.Fatalf("unexpected captured secret: %q", data)
+	}
+}
+
+func TestTrustedCredentialHelperPathRequiresAbsoluteCandidate(t *testing.T) {
+	if _, err := trustedCredentialHelperPath([]string{"security"}); err == nil {
+		t.Fatal("expected relative helper candidate to be rejected")
 	}
 }
 

@@ -26,6 +26,10 @@ type searchablePagedInboxBackend interface {
 	SearchEnvelopePage(context.Context, int, string) ([]message, bool, error)
 }
 
+type mailboxSwitchBackend interface {
+	WithMailbox(mailbox string) inboxBackend
+}
+
 type messageBodyBackend interface {
 	ReadMessage(context.Context, message) (string, error)
 }
@@ -191,6 +195,11 @@ func (h himalayaBackend) WithAccount(account string) inboxBackend {
 			h.trashFolder = firstNonEmpty(hint.Provider.Folders["trash"], "Trash")
 		}
 	}
+	return h
+}
+
+func (h himalayaBackend) WithMailbox(mailbox string) inboxBackend {
+	h.mailbox = firstNonEmpty(mailbox, "INBOX")
 	return h
 }
 

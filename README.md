@@ -105,8 +105,9 @@ stored in the OS credential store.
 
 | Key | Action |
 | --- | --- |
+| `Tab` | Move focus between the mailbox rail and message list |
 | `j` / `k` | Move in the inbox or scroll in the reader |
-| `Enter` | Open the selected email |
+| `Enter` | Open the selected email or focused mailbox |
 | `PgUp` / `PgDn` | Jump through an open email |
 | `Home` / `End` | Jump to the top or bottom of an open email |
 | `b` / `Esc` | Go back |
@@ -117,11 +118,25 @@ stored in the OS credential store.
 | `a` | Archive the selected email |
 | `d` | Move the selected email to Trash, with confirmation |
 | `/` | Search the current mailbox |
-| `R` | Refresh the inbox |
+| `R` | Refresh the current mailbox |
 | `A` | Add or update an account |
 | `t` | Choose a theme |
 | `?` | Show help |
 | `q` | Quit or close the current view |
+
+### Mailbox Navigation
+
+Use the mailbox rail on the left side of the TUI to move between folders:
+
+1. Press `Tab` to focus the mailbox rail.
+2. Press `j` or `k` to choose `Inbox`, `Unread`, `Archive`, `Sent`, `Drafts`,
+   or `Trash`.
+3. Press `Enter` to open the selected mailbox or filter.
+4. Press `Tab`, `Esc`, `b`, or the right arrow to return focus to the message
+   list.
+
+`Unread` is an unread-only view of your inbox. From `Unread`, press `Esc` to go
+back to all inbox mail.
 
 Large inboxes are handled page by page. The newest page appears first so the app
 feels responsive, and older mail continues loading in the background until the

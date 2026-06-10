@@ -305,6 +305,106 @@ func TestEscClearsActiveSearch(t *testing.T) {
 	}
 }
 
+func TestMailboxRailCanOpenUnreadView(t *testing.T) {
+	backend := &mailboxSwitchTestBackend{
+		mailbox: "INBOX",
+		pages: map[string][][]message{
+			"INBOX": {{
+				{ID: "1", From: "Alice", Subject: "Unread", Unread: true},
+				{ID: "2", From: "Bob", Subject: "Read", Unread: false},
+			}},
+		},
+	}
+	m := NewWithOptions(Options{backend: backend})
+	m.width = 120
+	m.height = 24
+	m.messages = []message{
+		{ID: "1", From: "Alice", Subject: "Unread", Unread: true},
+		{ID: "2", From: "Bob", Subject: "Read", Unread: false},
+	}
+	m.loading = false
+
+	m = pressKey(t, m, "tab")
+	if !m.mailboxFocused {
+		t.Fatal("expected tab to focus mailbox rail")
+	}
+	m = pressKey(t, m, "j")
+	if m.mailboxCursor != 1 {
+		t.Fatalf("expected mailbox cursor on Unread, got %d", m.mailboxCursor)
+	}
+
+	next, cmd := m.Update(keyMsg("enter"))
+	updated := next.(model)
+	if cmd == nil {
+		t.Fatal("expected unread view to reload")
+	}
+	if updated.mailboxFocused {
+		t.Fatal("expected opening unread to return focus to messages")
+	}
+	if updated.mailboxFilter != unreadMailFilter {
+		t.Fatalf("expected unread filter, got %v", updated.mailboxFilter)
+	}
+
+	loaded := cmd().(inboxPageLoadedMsg)
+	next, _ = updated.Update(loaded)
+	updated = next.(model)
+	if len(updated.messages) != 1 || updated.messages[0].ID != "1" {
+		t.Fatalf("expected only unread message, got %+v", updated.messages)
+	}
+
+	updated = pressKey(t, updated, "enter")
+	if updated.mode != readerView {
+		t.Fatalf("expected unread message to open, got %v", updated.mode)
+	}
+	updated = pressKey(t, updated, "b")
+	if len(updated.messages) != 0 {
+		t.Fatalf("expected read message to leave unread view, got %+v", updated.messages)
+	}
+}
+
+func TestMailboxRailCanSwitchToSent(t *testing.T) {
+	backend := &mailboxSwitchTestBackend{
+		mailbox: "INBOX",
+		pages: map[string][][]message{
+			"INBOX": {{
+				{ID: "1", From: "Alice", Subject: "Inbox"},
+			}},
+			"Sent": {{
+				{ID: "9", From: "Me", Subject: "Sent message"},
+			}},
+		},
+	}
+	m := NewWithOptions(Options{backend: backend})
+	m.width = 120
+	m.height = 24
+	m.messages = []message{{ID: "1", From: "Alice", Subject: "Inbox"}}
+	m.loading = false
+
+	m = pressKey(t, m, "tab")
+	m = pressKey(t, m, "j")
+	m = pressKey(t, m, "j")
+	m = pressKey(t, m, "j")
+
+	next, cmd := m.Update(keyMsg("enter"))
+	updated := next.(model)
+	if cmd == nil {
+		t.Fatal("expected sent mailbox to reload")
+	}
+	if backend.mailbox != "Sent" || updated.mailbox != "Sent" {
+		t.Fatalf("expected backend/model mailbox Sent, got backend=%q model=%q", backend.mailbox, updated.mailbox)
+	}
+	if updated.mailboxFilter != allMailFilter {
+		t.Fatalf("expected all mail filter, got %v", updated.mailboxFilter)
+	}
+
+	loaded := cmd().(inboxPageLoadedMsg)
+	next, _ = updated.Update(loaded)
+	updated = next.(model)
+	if len(updated.messages) != 1 || updated.messages[0].ID != "9" {
+		t.Fatalf("expected sent message, got %+v", updated.messages)
+	}
+}
+
 func TestComposeDraftFlowReviewsAndSends(t *testing.T) {
 	backend := &draftFlowBackend{
 		draft: "From: Freddy <freddy@example.com>\nTo: \nSubject: \n\n",
@@ -959,6 +1059,23 @@ func TestInboxAndReaderSanitizeMailText(t *testing.T) {
 	}
 }
 
+func TestHeaderSanitizesAccountLabel(t *testing.T) {
+	m := newTestModel()
+	m.width = 100
+	m.height = 30
+	m.account = "work\x1b]52;c;SGVsbG8=\a"
+
+	view := m.View()
+	for _, unsafe := range []string{"\x1b", "\a", "]52"} {
+		if strings.Contains(view, unsafe) {
+			t.Fatalf("header leaked account control payload %q in %q", unsafe, view)
+		}
+	}
+	if !strings.Contains(view, "work") {
+		t.Fatalf("expected sanitized account name to remain visible, got %q", view)
+	}
+}
+
 func TestGmailSecretNormalizationRemovesSpaces(t *testing.T) {
 	provider := detectProvider("freddy@gmail.com")
 	got := provider.normalizeSecret(" abcd efgh ijkl mnop ")
@@ -1160,12 +1277,47 @@ func (b *actionFlowBackend) DeleteMessage(_ context.Context, msg message) error 
 	return nil
 }
 
+type mailboxSwitchTestBackend struct {
+	mailbox string
+	pages   map[string][][]message
+	calls   []string
+}
+
+func (b *mailboxSwitchTestBackend) ListEnvelopes(context.Context) ([]message, error) {
+	var messages []message
+	for _, page := range b.pages[b.mailbox] {
+		messages = append(messages, page...)
+	}
+	return messages, nil
+}
+
+func (b *mailboxSwitchTestBackend) ListEnvelopePage(_ context.Context, page int) ([]message, bool, error) {
+	b.calls = append(b.calls, b.mailbox)
+	pages := b.pages[b.mailbox]
+	index := page - 1
+	if index < 0 || index >= len(pages) {
+		return nil, true, nil
+	}
+	return pages[index], index == len(pages)-1, nil
+}
+
+func (b *mailboxSwitchTestBackend) WithMailbox(mailbox string) inboxBackend {
+	b.mailbox = mailbox
+	return b
+}
+
+func (b *mailboxSwitchTestBackend) Label() string {
+	return "mailbox switch fake"
+}
+
 func keyMsg(key string) tea.KeyMsg {
 	switch key {
 	case "enter":
 		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
 	case "backspace":
 		return tea.KeyMsg{Type: tea.KeyBackspace}
 	case "delete":

@@ -208,6 +208,44 @@ func normalizeDraftContent(content string) string {
 	return strings.ReplaceAll(content, "\r", "\n")
 }
 
+func stripDraftHeader(content, header string) string {
+	content = normalizeDraftContent(content)
+	header = strings.ToLower(strings.TrimSpace(header))
+	if header == "" {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	inHeaders := true
+	skipping := false
+	for _, line := range lines {
+		if inHeaders {
+			if line == "" {
+				inHeaders = false
+				skipping = false
+				out = append(out, line)
+				continue
+			}
+			if skipping && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
+				continue
+			}
+			skipping = false
+			key, _, ok := strings.Cut(line, ":")
+			if ok && strings.EqualFold(strings.TrimSpace(key), header) {
+				skipping = true
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func smtpDraftContent(content string) string {
+	return ensureFinalNewline(stripDraftHeader(content, "bcc"))
+}
+
 func normalizeDraftTemplate(data []byte) string {
 	return ensureFinalNewline(strings.TrimRight(normalizeDraftContent(string(data)), " \t\r\n"))
 }
@@ -243,7 +281,7 @@ func localReplyTemplate(msg message, from string) string {
 	}
 	lines = append(lines, "To: "+safeHeaderValue(msg.Email), "Subject: "+safeHeaderValue(subject), "", "")
 
-	quoted := firstNonEmpty(msg.Body, msg.Preview)
+	quoted := terminalSafeText(firstNonEmpty(msg.Body, msg.Preview))
 	if strings.TrimSpace(quoted) != "" {
 		lines = append(lines, "")
 		for _, line := range strings.Split(normalizeDraftContent(quoted), "\n") {

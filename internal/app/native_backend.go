@@ -54,6 +54,11 @@ func (n nativeBackend) WithAccount(account string) inboxBackend {
 	return n
 }
 
+func (n nativeBackend) WithMailbox(mailbox string) inboxBackend {
+	n.mailbox = firstNonEmpty(mailbox, "INBOX")
+	return n
+}
+
 func (n nativeBackend) accountHint() (accountSetup, bool) {
 	store, err := openNativeStore(n.statePath)
 	if err != nil {
@@ -384,7 +389,7 @@ func (n nativeBackend) SendDraft(ctx context.Context, content string) error {
 		return err
 	}
 	addr := net.JoinHostPort(account.SMTPHost, fmt.Sprint(account.SMTPPort))
-	reader := strings.NewReader(ensureFinalNewline(content))
+	reader := strings.NewReader(smtpDraftContent(content))
 	if strings.EqualFold(account.SMTPSecurity, "tls") || account.SMTPPort == 465 {
 		return smtp.SendMailTLS(addr, auth, from, recipients, reader)
 	}

@@ -14,6 +14,11 @@ import (
 
 const defaultDownloadsDir = "~/Downloads"
 
+var (
+	macOSSecurityHelperCandidates = []string{"/usr/bin/security"}
+	secretToolHelperCandidates    = []string{"/usr/bin/secret-tool", "/bin/secret-tool", "/usr/local/bin/secret-tool"}
+)
+
 type accountSetup struct {
 	Account     string
 	Email       string
@@ -67,8 +72,8 @@ func saveCredential(setup accountSetup) (credentialRef, error) {
 	case "darwin":
 		return saveMacOSCredential(setup, service)
 	case "linux":
-		if _, err := exec.LookPath("secret-tool"); err == nil {
-			return saveSecretToolCredential(setup, service)
+		if helper, err := trustedCredentialHelperPath(secretToolHelperCandidates); err == nil {
+			return saveSecretToolCredential(setup, service, helper)
 		}
 	}
 
@@ -80,27 +85,31 @@ func saveCredential(setup accountSetup) (credentialRef, error) {
 }
 
 func saveMacOSCredential(setup accountSetup, service string) (credentialRef, error) {
+	helper, err := trustedCredentialHelperPath(macOSSecurityHelperCandidates)
+	if err != nil {
+		return credentialRef{}, fmt.Errorf("could not find trusted macOS Keychain helper: %w", err)
+	}
 	args := macOSKeychainAddArgs(setup, service)
-	if output, err := runCredentialCommand("security", args, setup.Secret+"\n"); err != nil {
+	if output, err := runCredentialCommand(helper, args, setup.Secret+"\n"); err != nil {
 		return credentialRef{}, fmt.Errorf("could not save password to macOS Keychain: %s", oneLine(firstNonEmpty(string(output), err.Error())))
 	}
-	return credentialRef{Command: macOSKeychainFindCommand(setup, service)}, nil
+	return credentialRef{Command: macOSKeychainFindCommand(helper, setup, service)}, nil
 }
 
 func macOSKeychainAddArgs(setup accountSetup, service string) []string {
 	return []string{"add-generic-password", "-a", setup.Email, "-s", service, "-U", "-w"}
 }
 
-func macOSKeychainFindCommand(setup accountSetup, service string) string {
-	return "security find-generic-password -a " + shellQuote(setup.Email) + " -s " + shellQuote(service) + " -w"
+func macOSKeychainFindCommand(helper string, setup accountSetup, service string) string {
+	return shellQuote(helper) + " find-generic-password -a " + shellQuote(setup.Email) + " -s " + shellQuote(service) + " -w"
 }
 
-func saveSecretToolCredential(setup accountSetup, service string) (credentialRef, error) {
+func saveSecretToolCredential(setup accountSetup, service, helper string) (credentialRef, error) {
 	args := secretToolStoreArgs(setup, service)
-	if output, err := runCredentialCommand("secret-tool", args, setup.Secret+"\n"); err != nil {
+	if output, err := runCredentialCommand(helper, args, setup.Secret+"\n"); err != nil {
 		return credentialRef{}, fmt.Errorf("could not save password with secret-tool: %s", oneLine(firstNonEmpty(string(output), err.Error())))
 	}
-	return credentialRef{Command: secretToolLookupCommand(setup, service)}, nil
+	return credentialRef{Command: secretToolLookupCommand(helper, setup, service)}, nil
 }
 
 func secretToolStoreArgs(setup accountSetup, service string) []string {
@@ -108,16 +117,38 @@ func secretToolStoreArgs(setup accountSetup, service string) []string {
 	return []string{"store", "--label", label, "service", service, "account", setup.Email}
 }
 
-func secretToolLookupCommand(setup accountSetup, service string) string {
-	return "secret-tool lookup service " + shellQuote(service) + " account " + shellQuote(setup.Email)
+func secretToolLookupCommand(helper string, setup accountSetup, service string) string {
+	return shellQuote(helper) + " lookup service " + shellQuote(service) + " account " + shellQuote(setup.Email)
 }
 
 func runCredentialCommand(name string, args []string, input string) ([]byte, error) {
-	cmd := exec.Command(name, args...) // #nosec G204 -- credential-store binaries are selected by clibox; user secrets are passed via stdin, not argv.
+	if !filepath.IsAbs(name) {
+		return nil, fmt.Errorf("credential helper path must be absolute: %s", name)
+	}
+	cmd := exec.Command(name, args...) // #nosec G204 -- credential-store binaries are selected from trusted absolute paths; user secrets are passed via stdin, not argv.
 	if input != "" {
 		cmd.Stdin = strings.NewReader(input)
 	}
 	return cmd.CombinedOutput()
+}
+
+func trustedCredentialHelperPath(candidates []string) (string, error) {
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || !filepath.IsAbs(candidate) {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if err != nil {
+			resolved = candidate
+		}
+		info, err := os.Stat(resolved)
+		if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+			continue
+		}
+		return resolved, nil
+	}
+	return "", errors.New("no trusted credential helper found")
 }
 
 func writeHimalayaAccountConfig(path string, setup accountSetup, credential credentialRef) error {

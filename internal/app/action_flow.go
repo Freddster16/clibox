@@ -157,12 +157,24 @@ func (m model) clearSearch() (model, tea.Cmd) {
 	return m.refreshInbox("clearing search...")
 }
 
+func (m model) clearMailboxFilter() (model, tea.Cmd) {
+	m.mailboxFilter = allMailFilter
+	m.mailboxCursor = m.activeMailboxEntryIndex()
+	return m.refreshInbox("showing all mail in " + m.mailboxLabel() + "...")
+}
+
 func (m model) refreshInbox(status string) (model, tea.Cmd) {
+	return m.reloadMailbox(status)
+}
+
+func (m model) reloadMailbox(status string) (model, tea.Cmd) {
 	m.loading = true
 	m.loadingMore = false
 	m.loadedAll = false
 	m.loadingMessageID = ""
 	m.readerOffset = 0
+	m.messages = nil
+	m.cursor = 0
 	m.loadSerial++
 	m.status = status
 	return m, m.loadInbox()
@@ -184,6 +196,16 @@ func filterMessages(messages []message, query string) []message {
 			}
 		}
 		if matched {
+			filtered = append(filtered, msg)
+		}
+	}
+	return filtered
+}
+
+func filterUnreadMessages(messages []message) []message {
+	var filtered []message
+	for _, msg := range messages {
+		if msg.Unread {
 			filtered = append(filtered, msg)
 		}
 	}

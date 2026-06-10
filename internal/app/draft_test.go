@@ -23,6 +23,46 @@ func TestLocalReplyTemplateSanitizesHeaders(t *testing.T) {
 	}
 }
 
+func TestLocalReplyTemplateSanitizesQuotedBodyControls(t *testing.T) {
+	template := localReplyTemplate(message{
+		Email:   "alice@example.com",
+		Subject: "Hello",
+		Body:    "Hello\x1b]52;c;SGVsbG8=\a red\x1b[31m text",
+	}, "Freddy <freddy@example.com>")
+
+	for _, unsafe := range []string{"\x1b", "\a", "]52", "[31m"} {
+		if strings.Contains(template, unsafe) {
+			t.Fatalf("reply template leaked terminal control payload %q in:\n%s", unsafe, template)
+		}
+	}
+	if !strings.Contains(template, "> Hello red text") {
+		t.Fatalf("expected sanitized quoted body, got:\n%s", template)
+	}
+}
+
+func TestSMTPDraftContentStripsBccHeaderAndContinuations(t *testing.T) {
+	content := "From: me@example.com\nTo: visible@example.com\nBcc: hidden@example.com\n\tsecond@example.com\nSubject: Hi\n\nBody\nBcc: not a header\n"
+
+	summary := parseDraftSummary(content)
+	if !strings.Contains(summary.Bcc, "hidden@example.com") || !strings.Contains(summary.Bcc, "second@example.com") {
+		t.Fatalf("expected draft parser to keep Bcc recipients for envelope, got %q", summary.Bcc)
+	}
+
+	payload := smtpDraftContent(content)
+	headers, body, ok := strings.Cut(payload, "\n\n")
+	if !ok {
+		t.Fatalf("expected payload to contain header/body separator, got %q", payload)
+	}
+	for _, hidden := range []string{"Bcc:", "hidden@example.com", "second@example.com"} {
+		if strings.Contains(headers, hidden) {
+			t.Fatalf("SMTP payload headers leaked %q:\n%s", hidden, headers)
+		}
+	}
+	if !strings.Contains(body, "Bcc: not a header") {
+		t.Fatalf("expected body text to be preserved, got %q", body)
+	}
+}
+
 func TestDraftTempFileUsesOwnerOnlyPermissions(t *testing.T) {
 	path, err := writeDraftFile("To: alice@example.com\n\nHi\n")
 	if err != nil {

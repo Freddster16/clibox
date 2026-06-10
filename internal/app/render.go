@@ -54,6 +54,8 @@ func (m model) renderHeader() string {
 	countLabel := fmt.Sprintf("%d emails", len(m.messages))
 	if strings.TrimSpace(m.searchQuery) != "" {
 		countLabel = fmt.Sprintf("%d results", len(m.messages))
+	} else if m.mailboxFilter == unreadMailFilter {
+		countLabel = fmt.Sprintf("%d unread", len(m.messages))
 	}
 	count := styles.subtitle.Render(countLabel)
 	title := styles.title.Render("clibox")
@@ -71,6 +73,9 @@ func (m model) renderInbox(height int) string {
 	styles := m.activeTheme().styles
 	if m.width >= 96 {
 		return m.renderWideInbox(height)
+	}
+	if m.mailboxFocused {
+		return m.renderMailboxRail(max(32, m.width), height)
 	}
 
 	lines := []string{styles.panelTitle.Render(m.inboxTitle())}
@@ -249,27 +254,45 @@ func (m model) renderWideInbox(height int) string {
 
 func (m model) renderMailboxRail(width, height int) string {
 	styles := m.activeTheme().styles
-	unread := 0
-	for _, msg := range m.messages {
-		if msg.Unread {
-			unread++
-		}
+	title := "Mailboxes"
+	if m.mailboxFocused {
+		title = "Mailboxes *"
 	}
-
-	lines := []string{
-		styles.panelTitle.Render("Mailboxes"),
-		styles.selected.Width(width).Render(fmt.Sprintf("> %-8s %4d", truncate(m.mailboxLabel(), 8), len(m.messages))),
-		styles.rowAlt.Width(width).Render(fmt.Sprintf("  Unread %6d", unread)),
-		styles.row.Width(width).Render("  Archive"),
-		styles.rowAlt.Width(width).Render("  Sent"),
-		styles.row.Width(width).Render("  Drafts"),
+	lines := []string{styles.panelTitle.Render(title)}
+	for i, entry := range m.mailboxEntries() {
+		cursor := " "
+		if m.mailboxFocused && i == m.mailboxCursor {
+			cursor = ">"
+		}
+		active := " "
+		if m.mailboxEntryActive(entry.Mailbox, entry.Filter) {
+			active = "*"
+		}
+		count := ""
+		if entry.Count != "" {
+			count = fmt.Sprintf("%4s", truncate(entry.Count, 4))
+		}
+		labelWidth := max(5, width-7)
+		line := fmt.Sprintf("%s%s %-*s%s", cursor, active, labelWidth, truncate(entry.Label, labelWidth), count)
+		style := styles.row
+		if i%2 == 1 {
+			style = styles.rowAlt
+		}
+		if m.mailboxFocused && i == m.mailboxCursor {
+			style = styles.selected
+		} else if m.mailboxEntryActive(entry.Mailbox, entry.Filter) {
+			style = styles.unread
+		}
+		lines = append(lines, style.Width(width).Render(truncate(line, width)))
+	}
+	lines = append(lines,
 		styles.screen.Width(width).Render(""),
 		styles.panelTitle.Render("Theme"),
 		styles.themeBadge.Width(width).Render(m.activeTheme().name),
 		styles.screen.Width(width).Render(""),
 		styles.panelTitle.Render("Accounts"),
-		styles.row.Width(width).Render("  " + truncate(m.accountLabel(), max(1, width-2))),
-	}
+		styles.row.Width(width).Render("  "+truncate(m.accountLabel(), max(1, width-2))),
+	)
 	return fitHeight(strings.Join(lines, "\n"), height)
 }
 
@@ -279,6 +302,9 @@ func (m model) renderRows(width, height int) []string {
 		return []string{styles.row.Width(width).Render(truncate("  Loading "+m.scopeLabel()+"...", width))}
 	}
 	if len(m.messages) == 0 {
+		if m.mailboxFilter == unreadMailFilter {
+			return []string{styles.row.Width(width).Render(truncate("  No unread emails. Press Esc for all mail.", width))}
+		}
 		if strings.TrimSpace(m.searchQuery) != "" {
 			return []string{styles.row.Width(width).Render(truncate("  No search results. Press / to search again or Esc to clear.", width))}
 		}
@@ -418,7 +444,7 @@ func (m model) renderMessage(width, height int, includePreview bool) string {
 func (m model) renderFooter() string {
 	styles := m.activeTheme().styles
 	themeHint := fmt.Sprintf("theme %s: t themes", m.activeTheme().name)
-	hints := themeHint + "  |  j/k move  enter read  R refresh  A account  r reply  c compose  a archive  / search  ? help  q quit"
+	hints := themeHint + "  |  tab mailboxes  j/k move  enter read  R refresh  A account  r reply  c compose  a archive  / search  ? help  q quit"
 	if m.mode == readerView {
 		hints = themeHint + "  |  j/k scroll  b back  r reply  a archive  d delete  ? help  q back"
 	} else if m.mode == setupView {
@@ -428,6 +454,8 @@ func (m model) renderFooter() string {
 		if m.draft.Sending {
 			hints = "sending email..."
 		}
+	} else if m.mailboxFocused {
+		hints = "mailboxes  |  j/k choose  enter open  tab/right messages  R refresh  ? help  q quit"
 	} else if m.searching {
 		hints = "search: " + m.searchInput + "_  |  enter apply  esc cancel  ctrl+u clear"
 	} else if m.confirmDelete {
@@ -435,7 +463,9 @@ func (m model) renderFooter() string {
 	} else if m.action.Running {
 		hints = m.action.Kind.presentParticiple() + " email..."
 	} else if strings.TrimSpace(m.searchQuery) != "" && m.mode == inboxView {
-		hints = themeHint + "  |  / search again  esc clear search  j/k move  enter read  a archive  d delete  R refresh  ? help"
+		hints = themeHint + "  |  tab mailboxes  / search again  esc clear search  j/k move  enter read  a archive  d delete  R refresh  ? help"
+	} else if m.mailboxFilter == unreadMailFilter && m.mode == inboxView {
+		hints = themeHint + "  |  tab mailboxes  esc all mail  j/k move  enter read  / search  R refresh  ? help"
 	}
 	if m.status != "" {
 		hints = m.status + "  |  " + hints
@@ -471,6 +501,8 @@ func (m model) overlayHelp(content string) string {
 		"",
 		"Theme      " + m.activeTheme().name,
 		"",
+		"Tab        focus mailboxes",
+		"Enter      open selected mailbox/filter",
 		"j / k      move in inbox",
 		"Enter      open selected email",
 		"j / k      scroll in reader",
@@ -483,7 +515,7 @@ func (m model) overlayHelp(content string) string {
 		"a          archive selected email",
 		"d          delete selected email with confirmation",
 		"/          search current mailbox",
-		"Esc        clear active search in inbox",
+		"Esc        clear active search/filter in inbox",
 		"R          refresh inbox",
 		"A          add or update an email account",
 		"t          open theme picker",
