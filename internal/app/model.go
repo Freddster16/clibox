@@ -23,10 +23,15 @@ type Options struct {
 	Account       string
 	Mailbox       string
 	ArchiveFolder string
+	BackendMode   string
 	Himalaya      string
 	Editor        string
 	PageSize      int
 	ConfirmDelete *bool
+	ConfigPath    string
+	StatePath     string
+	Accounts      map[string]AccountConfig
+	Verbose       bool
 	backend       inboxBackend
 }
 
@@ -147,12 +152,10 @@ func NewWithOptions(options Options) model {
 	backend := options.backend
 	var hint accountSetup
 	if backend == nil {
-		himalaya := newHimalayaBackend(options)
-		backend = himalaya
+		backend, hint = newConfiguredBackend(options)
 		if options.Mailbox == "" {
-			options.Mailbox = himalaya.mailbox
+			options.Mailbox = "INBOX"
 		}
-		hint, _ = himalayaAccountHint(himalaya.account)
 	}
 	setupEmail := strings.TrimSpace(hint.Email)
 	setupAccount := firstNonEmpty(options.Account, hint.Account, "personal")
@@ -184,6 +187,23 @@ func (m model) Init() tea.Cmd {
 	return m.loadInbox()
 }
 
+func (m model) setupStepAfterSetupRequired() setupStep {
+	if strings.TrimSpace(m.setupEmail) == "" {
+		return setupEmailStep
+	}
+	provider := m.setupProvider
+	if provider.Name == "" && validEmailAddress(m.setupEmail) {
+		provider = detectProvider(m.setupEmail)
+	}
+	if _, ok := m.backend.(oauthAccountSetupBackend); ok && providerNeedsOAuth(provider) {
+		return setupReviewStep
+	}
+	if provider.canAutoConfigure() {
+		return setupSecretStep
+	}
+	return setupEmailStep
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case inboxPageLoadedMsg:
@@ -197,16 +217,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = setupView
 				m.messages = nil
 				m.cursor = 0
-				m.setupStep = setupEmailStep
-				if strings.TrimSpace(m.setupEmail) != "" && m.setupProvider.canAutoConfigure() {
-					m.setupStep = setupSecretStep
-				}
 				if strings.TrimSpace(m.setupAccount) == "" {
 					m.setupAccount = firstNonEmpty(m.account, "personal")
 				}
 				if strings.TrimSpace(m.setupProvider.Name) == "" && validEmailAddress(m.setupEmail) {
 					m.setupProvider = detectProvider(m.setupEmail)
 				}
+				m.setupStep = m.setupStepAfterSetupRequired()
 				status := msg.err.Error()
 				if m.setupStep == setupSecretStep {
 					status = "paste your " + strings.ToLower(m.setupProvider.secretLabel()) + ", not your email address"
@@ -255,16 +272,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = setupView
 				m.messages = nil
 				m.cursor = 0
-				m.setupStep = setupEmailStep
-				if strings.TrimSpace(m.setupEmail) != "" && m.setupProvider.canAutoConfigure() {
-					m.setupStep = setupSecretStep
-				}
 				if strings.TrimSpace(m.setupAccount) == "" {
 					m.setupAccount = firstNonEmpty(m.account, "personal")
 				}
 				if strings.TrimSpace(m.setupProvider.Name) == "" && validEmailAddress(m.setupEmail) {
 					m.setupProvider = detectProvider(m.setupEmail)
 				}
+				m.setupStep = m.setupStepAfterSetupRequired()
 				status := msg.err.Error()
 				if m.setupStep == setupSecretStep {
 					status = "paste your " + strings.ToLower(m.setupProvider.secretLabel()) + ", not your email address"

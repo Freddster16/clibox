@@ -4,6 +4,7 @@ set -eu
 repo="github.com/Freddster16/clibox"
 bin_name="clibox"
 min_go_minor="25"
+min_go_patch="11"
 
 load_homebrew_path() {
   if command -v brew >/dev/null 2>&1; then
@@ -72,14 +73,22 @@ go_version_ok() {
   rest="${version#*.}"
   minor="${rest%%.*}"
   minor="${minor%%[!0-9]*}"
+  patch="${rest#*.}"
+  if [ "$patch" = "$rest" ]; then
+    patch="0"
+  else
+    patch="${patch%%[!0-9]*}"
+  fi
 
-  case "$major:$minor" in
-    *[!0-9:]*|:|*:)
+  case "$major:$minor:$patch" in
+    *[!0-9:]*|:|*:|*::)
       return 1
       ;;
   esac
 
-  [ "$major" -gt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -ge "$min_go_minor" ]; }
+  [ "$major" -gt 1 ] ||
+    { [ "$major" -eq 1 ] && [ "$minor" -gt "$min_go_minor" ]; } ||
+    { [ "$major" -eq 1 ] && [ "$minor" -eq "$min_go_minor" ] && [ "$patch" -ge "$min_go_patch" ]; }
 }
 
 install_go() {
@@ -88,11 +97,11 @@ install_go() {
   fi
 
   install_homebrew
-  echo "Installing Go 1.${min_go_minor}+ with Homebrew..."
+  echo "Installing Go 1.${min_go_minor}.${min_go_patch}+ with Homebrew..."
   brew install go
 
   if ! go_version_ok; then
-    echo "clibox install requires Go 1.${min_go_minor} or newer." >&2
+    echo "clibox install requires Go 1.${min_go_minor}.${min_go_patch} or newer." >&2
     echo "Install Go first: https://go.dev/dl/" >&2
     exit 1
   fi
@@ -108,7 +117,11 @@ install_himalaya() {
   brew install himalaya
 }
 
-install_himalaya
+if [ "${CLIBOX_SKIP_HIMALAYA:-}" = "1" ]; then
+  echo "Skipping Himalaya compatibility backend because CLIBOX_SKIP_HIMALAYA=1."
+else
+  install_himalaya
+fi
 install_go
 
 echo "Installing ${bin_name} from ${repo} main..."
@@ -121,12 +134,19 @@ fi
 
 echo
 echo "Installed ${bin_name} to ${gobin}/${bin_name}"
-echo "Email backend is available."
+if [ "${CLIBOX_SKIP_HIMALAYA:-}" = "1" ]; then
+  echo "Native backend is built in. Himalaya compatibility backend was skipped."
+else
+  echo "Himalaya compatibility backend is available. Native backend is built in."
+fi
 echo "Run it with:"
 echo "  ${bin_name}"
 echo "Check your email setup with:"
 echo "  ${bin_name} doctor"
-echo "If an account is needed, ${bin_name} will ask for your email once and configure common providers in the TUI."
+echo "Native account commands:"
+echo "  ${bin_name} auth add --email you@gmail.com --account gmail"
+echo "  ${bin_name} auth login --account gmail"
+echo "  ${bin_name} --mail-backend native --account gmail"
 echo
 echo "If your shell cannot find it, add this to PATH:"
 echo "  export PATH=\"${gobin}:\$PATH\""

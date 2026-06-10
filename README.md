@@ -8,12 +8,13 @@ at home next to Neovim, Codex, OpenCode, Hermes, tmux, and a shell: open the
 inbox, move with `j/k`, read with `Enter`, reply in `$EDITOR`, archive with
 `a`, search with `/`, change themes with `t`, and quit with `q`.
 
-Status: Phase 5 is implemented. `clibox` loads real inbox envelopes after
-account setup, opens the selected email body on demand with `Enter`, and keeps
-opened bodies cached for the current session. First-run setup happens inside
-`clibox` for common providers. Compose and reply now open the user's terminal
-editor, return to a review screen, and send only after confirmation. Archive,
-delete confirmation, and mailbox search now work from the TUI.
+Status: Phase 6 is underway. The Himalaya-backed TUI remains the default
+compatibility path, and a native backend now exists behind `backend = "native"`
+or `--mail-backend native`. The native path adds browser OAuth plumbing,
+native IMAP/SMTP operations, SQLite envelope/body cache, OS keychain token
+storage, and new account/sync commands. Public one-click Gmail/Outlook login
+still needs verified clibox OAuth client IDs before it can be the default for
+everyone.
 
 ## Current implementation
 
@@ -35,6 +36,10 @@ delete confirmation, and mailbox search now work from the TUI.
 - Reads optional local preferences from `~/.config/clibox/config.toml`.
 - Refreshes the envelope list with `R`.
 - Provides `clibox doctor` for setup checks before opening the TUI.
+- Adds a native backend with OAuth PKCE loopback login for Gmail/Outlook when a
+  provider OAuth client ID is configured.
+- Stores native account metadata and cached envelopes in SQLite, but keeps
+  passwords, access tokens, and refresh tokens out of config and cache.
 
 ## Install
 
@@ -44,11 +49,12 @@ Install or update the latest `main` build from GitHub:
 curl -fsSL https://raw.githubusercontent.com/Freddster16/clibox/main/install.sh | sh
 ```
 
-The installer checks for Homebrew, the email backend, and Go before installing `clibox`.
-If Homebrew is already installed, the installer uses it to install the email
-backend and Go when Go 1.25 or newer is not available. For security, `clibox`
-does not silently chain into Homebrew's remote installer. If Homebrew is missing,
-install it yourself from [brew.sh](https://brew.sh/) or explicitly opt in:
+The installer checks for Homebrew, the Himalaya compatibility backend, and Go
+before installing `clibox`. If Homebrew is already installed, the installer uses
+it to install Himalaya and Go when Go 1.25.11 or newer is not available. For
+security, `clibox` does not silently chain into Homebrew's remote installer. If
+Homebrew is missing, install it yourself from [brew.sh](https://brew.sh/) or
+explicitly opt in:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Freddster16/clibox/main/install.sh | CLIBOX_INSTALL_HOMEBREW=1 sh
@@ -61,23 +67,30 @@ If your shell cannot find
 `clibox` after installation, add Go's bin directory to your `PATH`; the
 installer prints the exact path.
 
+Native backend users can skip installing Himalaya:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Freddster16/clibox/main/install.sh | CLIBOX_SKIP_HIMALAYA=1 sh
+```
+
 For local development:
 
 ```sh
 go run .
 ```
 
-Real email requires the bundled email backend for inbox data. If the backend is
-missing or setup is not finished, `clibox` shows a friendly setup prompt instead
-of crashing. If an account is needed, `clibox` asks for your email address once,
-detects the provider, chooses known IMAP/SMTP settings, asks for the required
-password or app password, stores the secret in the OS credential store, and
-reloads your inbox.
+Real email can use either the default Himalaya compatibility backend or the
+opt-in native backend. If setup is not finished, `clibox` shows a friendly setup
+prompt instead of crashing. In native mode, Gmail and Outlook use browser OAuth
+when a provider client ID is configured; iCloud, Fastmail, Yahoo, and custom
+IMAP providers continue to use app-password/manual setup through the OS
+credential store.
 
-Automatic secret storage uses macOS Keychain on macOS and `secret-tool`
-(`libsecret`) on Linux when it is available. On other platforms, manual backend
-setup is still available. A raw-password fallback exists only behind the
-explicit `CLIBOX_ALLOW_RAW_PASSWORD=1` escape hatch.
+Native secret storage uses the OS keychain through a cross-platform keyring
+library: macOS Keychain, Linux Secret Service, and Windows Credential Manager.
+The Himalaya compatibility path still supports macOS Keychain and Linux
+`secret-tool`; its raw-password fallback exists only behind the explicit
+`CLIBOX_ALLOW_RAW_PASSWORD=1` escape hatch.
 
 If you already installed `clibox` and want the latest UI changes:
 
@@ -141,7 +154,7 @@ Theme selection lives inside the TUI:
 `clibox` gives you a terminal-native inbox: start it, finish account setup if
 needed, and read mail without leaving the shell.
 
-Flow:
+Default compatibility flow:
 
 ```sh
 # 1. Start the TUI.
@@ -170,8 +183,41 @@ clibox --archive-folder Archive
 clibox doctor --account personal
 ```
 
-Manual backend setup is still available for advanced users. The current
-implementation uses Himalaya internally:
+Native OAuth flow:
+
+```sh
+# 1. Add safe account metadata. This writes no password or token to config.
+clibox auth add --email you@gmail.com --account gmail
+
+# 2. Configure a provider OAuth client ID.
+# Gmail and Outlook require a registered desktop/native OAuth app.
+export CLIBOX_GMAIL_CLIENT_ID="your-google-desktop-client-id"
+export CLIBOX_OUTLOOK_CLIENT_ID="your-microsoft-public-client-id"
+
+# 3. Start browser login. clibox listens on 127.0.0.1, validates state,
+# exchanges the code with PKCE, and stores the refresh token in the OS keychain.
+clibox auth login --account gmail
+
+# 4. Sync envelopes into the local cache, or open the TUI directly.
+clibox sync --account gmail --mailbox INBOX
+clibox --mail-backend native --account gmail --mailbox INBOX
+
+# 5. Inspect native setup without exposing secrets.
+clibox doctor --mail-backend native --verbose --account gmail
+clibox accounts
+```
+
+The native backend uses:
+
+- IMAP via `github.com/emersion/go-imap`.
+- SMTP via `github.com/emersion/go-smtp`.
+- MIME parsing/building via `github.com/emersion/go-message/mail`.
+- Provider-specific XOAUTH2/OAUTHBEARER-compatible SASL for OAuth mail login.
+- SQLite cache at `~/.local/state/clibox/clibox.db` or `XDG_STATE_HOME`.
+- OS keychain storage for refresh tokens and app passwords.
+
+Manual backend setup is still available for advanced users. The default
+compatibility implementation uses Himalaya internally:
 
 ```sh
 himalaya account configure personal
@@ -191,22 +237,28 @@ Provider guidance currently covers:
 - Custom domains: manual IMAP/SMTP settings are still needed before automatic
   background setup can cover them.
 
-Full Gmail browser OAuth is a planned upgrade. Google supports OAuth for
-Gmail IMAP/SMTP through XOAUTH2, but that flow requires a registered Google
-OAuth desktop client and the restricted `https://mail.google.com/` scope. Until
-`clibox` has its own verified Google OAuth client and token storage, the Gmail
-path opens Google's setup page and uses app-password-compatible IMAP setup.
+Gmail and Outlook browser OAuth are implemented for the native backend, but a
+publicly seamless flow still requires registered and verified clibox OAuth apps.
+Until those client IDs exist, developers can test with their own desktop/native
+OAuth client IDs through `CLIBOX_GMAIL_CLIENT_ID` or
+`CLIBOX_OUTLOOK_CLIENT_ID`.
 
 Useful launch flags:
 
 ```sh
 clibox --account personal --mailbox INBOX
 clibox --backend /path/to/backend
+clibox --mail-backend native --account gmail
 clibox --editor "nvim"
 clibox --page-size 50
 clibox --confirm-delete=false
 clibox --archive-folder "[Gmail]/All Mail"
 clibox doctor --account personal --mailbox INBOX
+clibox doctor --mail-backend native --verbose --account gmail
+clibox auth add --email you@gmail.com --account gmail
+clibox auth login --account gmail
+clibox accounts
+clibox sync --account gmail --mailbox INBOX
 ```
 
 Editor selection is environment-based today:
@@ -222,10 +274,11 @@ in the background until the mailbox is complete. `--page-size` is only an
 advanced tuning knob for how many envelopes the backend should return per request;
 it is not an inbox limit.
 
-`clibox` does not write email credentials into its own config. On macOS it saves
-the password/app password to Keychain and keeps command details inside the
-backend adapter. Draft files are temporary owner-only files, and email content
-is sent to the backend over stdin rather than as command-line arguments.
+`clibox` does not write email credentials into its own config. Native mode keeps
+refresh tokens and app passwords in the OS keychain and stores only account
+metadata plus cached mail data in SQLite. Draft files are temporary owner-only
+files, and email content is sent to the backend over stdin rather than as
+command-line arguments.
 The adapter currently tries the stable Himalaya v1 command first
 (`himalaya envelope list --output json`) and falls back to the in-development
 v2 shape (`himalaya envelopes list --json`) only when the command shape is
@@ -250,16 +303,20 @@ Check the email setup without opening the full-screen TUI:
 
 ```sh
 go run . doctor
+go run . doctor --mail-backend native --verbose
 ```
 
 `clibox doctor` checks the backend version, config path, account, mailbox, and
-the newest mailbox page. It does not download the full mailbox.
+the newest mailbox page. It does not download the full mailbox. Native doctor
+also verifies that the SQLite cache schema does not contain credential-like
+columns.
 
 Run the verification suite:
 
 ```sh
 go test ./...
 go build ./...
+go vet ./...
 ```
 
 Production code no longer carries a fake inbox. Test fixtures live in the test
@@ -277,15 +334,37 @@ Config path:
 Minimal config:
 
 ```toml
+backend = "native" # or "himalaya"
 account = "personal"
 mailbox = "INBOX"
 archive_folder = "Archive"
 editor = "nvim"
 confirm_delete = true
+
+[accounts.gmail]
+provider = "gmail"
+email = "you@gmail.com"
+mailbox = "INBOX"
+archive_folder = "[Gmail]/All Mail"
+sync_policy = "headers"
+editor = "nvim"
 ```
 
 The same path can be overridden with `CLIBOX_CONFIG` or `--config`.
 Command-line flags override config values for that launch.
+
+Allowed backend modes are `himalaya` and `native`. For compatibility with older
+configs, `backend = "/path/to/himalaya"` is treated as a Himalaya binary path,
+but new configs should use:
+
+```toml
+backend = "himalaya"
+himalaya_binary = "/opt/homebrew/bin/himalaya"
+```
+
+Config files intentionally reject credential-like keys such as `password`,
+`access_token`, `refresh_token`, `id_token`, and `client_secret`. Native tokens
+and app passwords belong in the OS credential store, not TOML or SQLite.
 
 Default keymap:
 
@@ -324,23 +403,29 @@ Build `clibox` in Go:
   for scrollable inbox rows, plus viewport/text input components where useful.
 - Styling: Lip Gloss themes with clear focus states, readable status areas, and
   a quick `t` theme switcher.
-- Backend: a Himalaya adapter that calls the CLI and parses JSON where
-  available.
-- Account setup: provider detection plus generated Himalaya config for common
-  IMAP/SMTP providers, with secrets stored in macOS Keychain or Linux
-  `secret-tool`.
+- Backend boundary: one internal mail interface for list, read, send, archive,
+  delete, search, and sync. TUI code does not build backend commands.
+- Compatibility backend: a Himalaya adapter that calls the CLI and parses JSON
+  where available.
+- Native backend: IMAP, SMTP, MIME parsing, XOAUTH2/OAUTHBEARER SASL, SQLite
+  cache, and OS keychain token/app-password storage.
+- Account setup: provider detection plus either generated Himalaya config or
+  native account metadata. Gmail and Outlook native setup uses browser OAuth
+  when a provider client ID is configured; app-password providers use the OS
+  credential store.
+- OAuth: RFC 8252-style external browser login with loopback redirect, PKCE,
+  and `state` validation. Device authorization is still a future fallback.
 - Drafts: create temporary owner-only draft files, open `CLIBOX_EDITOR`,
   `VISUAL`, `EDITOR`, or `nvim`, show a review step after the editor exits, and
-  send through Himalaya over stdin.
+  send through the selected backend over stdin.
 - Inbox actions: archive and delete through the backend adapter, plus
   plain-language search translated into the backend's query DSL.
-- App config: TOML at `~/.config/clibox/config.toml`; current account
-  connection details live in the backend config generated during setup.
+- App config: TOML at `~/.config/clibox/config.toml`; native state lives in
+  SQLite under XDG state; credentials never live in either place.
 
 The Himalaya command surface differs between released and in-development
-versions, so exact invocations should stay inside the adapter. The rest of the
-app should ask for operations like `ListEnvelopes`, `ReadMessage`, `Reply`,
-`Archive`, `Delete`, and `Search`, not build shell commands directly.
+versions, so exact invocations stay inside the adapter. The same boundary keeps
+provider-specific native IMAP/OAuth behavior away from the TUI.
 
 ## MVP roadmap
 
@@ -406,6 +491,25 @@ Round out the daily workflow:
 - `R` refreshes the current mailbox.
 - Errors appear inline without crashing the TUI.
 
+### Phase 6: Native OAuth mail
+
+Foundation implemented.
+
+Move from visible backend ceremony toward a native mail client:
+
+- `backend = "native"` and `--mail-backend native` select native mail.
+- `clibox auth add`, `clibox auth login`, `clibox accounts`, and `clibox sync`
+  expose native account and sync operations.
+- Gmail and Outlook use external browser OAuth with loopback redirect, PKCE,
+  state validation, and refresh-token storage in the OS keychain.
+- Native IMAP lists and reads messages, archives/deletes with IMAP MOVE when
+  available, and sends through SMTP.
+- SQLite caches accounts, mailboxes, envelopes, message bodies, and sync state.
+- Config and SQLite reject credential storage by design.
+
+Remaining production gate: register and verify public clibox OAuth clients for
+Gmail and Microsoft so normal users do not need to bring their own client IDs.
+
 ## UX principles
 
 - Make the fast path obvious: read, reply, archive, search, quit.
@@ -432,15 +536,30 @@ Round out the daily workflow:
   foundation for a stateful full-screen TUI.
 - [Himalaya](https://github.com/pimalaya/himalaya) is a strong first backend
   because it turns email protocols into scriptable CLI operations.
+- [RFC 8252](https://www.rfc-editor.org/info/rfc8252) guides native app OAuth:
+  use the system browser, loopback redirects, PKCE, and state validation instead
+  of embedded login.
+- [RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628) is the future
+  fallback for device-style authorization when a browser callback is awkward.
+- [Gmail XOAUTH2](https://developers.google.com/workspace/gmail/imap/xoauth2-protocol)
+  and [Microsoft IMAP/SMTP OAuth](https://learn.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth)
+  document OAuth access-token authentication for mail protocols.
+- Email workflow research frames the product goal as triage, task handling, and
+  retrieval, not just "show messages": [Whittaker/Sidner revisit](https://www.microsoft.com/en-us/research/publication/revisiting-whittaker-sidners-email-overload-ten-years-later/),
+  [Supporting Email Workflow](https://www.interruptions.net/literature/Venolia-01-88.pdf),
+  [Taking Email to Task](https://dl.acm.org/doi/10.1145/642611.642672),
+  and [email automation need-finding](https://dl.acm.org/doi/10.1145/3290605.3300604).
 
-## Non-goals for v0.1
+## Non-goals for the next pass
 
-- Native IMAP/SMTP implementation.
-- Full HTML email rendering.
+- Making native OAuth the default before verified public provider client IDs
+  exist.
+- Full HTML email rendering beyond a plain-text fallback.
 - Calendar support.
 - AI features.
 - Attachment-heavy workflows.
 - PGP, S/MIME, or advanced security workflows.
+- Release signing, Homebrew tap automation, and notarized binary distribution.
 - A plugin system.
 
 Those can come later if the core inbox loop feels excellent.

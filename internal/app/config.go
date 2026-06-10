@@ -15,9 +15,21 @@ type Config struct {
 	Mailbox       string
 	ArchiveFolder string
 	Backend       string
+	Himalaya      string
 	Editor        string
 	PageSize      int
 	ConfirmDelete *bool
+	Accounts      map[string]AccountConfig
+}
+
+type AccountConfig struct {
+	Name          string
+	Provider      string
+	Email         string
+	Mailbox       string
+	ArchiveFolder string
+	SyncPolicy    string
+	Editor        string
 }
 
 func LoadConfig(path string) (Config, string, error) {
@@ -72,10 +84,35 @@ func cliboxConfigPath(path string) (string, error) {
 
 func parseConfig(content string) (Config, error) {
 	var config Config
+	section := ""
+	sectionName := ""
 	for index, line := range strings.Split(normalizeConfigContent(content), "\n") {
 		lineNo := index + 1
 		line = strings.TrimSpace(stripTomlComment(line))
 		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			name := strings.TrimSpace(strings.Trim(line, "[]"))
+			switch {
+			case strings.HasPrefix(name, "accounts."):
+				account := strings.TrimSpace(strings.TrimPrefix(name, "accounts."))
+				account = strings.Trim(account, `"`)
+				account = sanitizeAccountName(account, "")
+				if account == "" {
+					return Config{}, fmt.Errorf("line %d: account section needs a name", lineNo)
+				}
+				if config.Accounts == nil {
+					config.Accounts = map[string]AccountConfig{}
+				}
+				entry := config.Accounts[account]
+				entry.Name = account
+				config.Accounts[account] = entry
+				section = "accounts"
+				sectionName = account
+			default:
+				return Config{}, fmt.Errorf("line %d: unknown config section %q", lineNo, name)
+			}
 			continue
 		}
 		key, raw, ok := strings.Cut(line, "=")
@@ -84,6 +121,19 @@ func parseConfig(content string) (Config, error) {
 		}
 		key = strings.TrimSpace(key)
 		raw = strings.TrimSpace(raw)
+		if isCredentialConfigKey(key) {
+			return Config{}, fmt.Errorf("line %d: credential key %q is not allowed in clibox config", lineNo, key)
+		}
+
+		if section == "accounts" {
+			entry := config.Accounts[sectionName]
+			if err := parseAccountConfigField(&entry, key, raw, lineNo); err != nil {
+				return Config{}, err
+			}
+			config.Accounts[sectionName] = entry
+			continue
+		}
+
 		switch key {
 		case "theme":
 			value, err := parseConfigString(raw)
@@ -114,7 +164,13 @@ func parseConfig(content string) (Config, error) {
 			if err != nil {
 				return Config{}, fmt.Errorf("line %d: %w", lineNo, err)
 			}
-			config.Backend = value
+			applyBackendConfigValue(&config, value)
+		case "himalaya_binary":
+			value, err := parseConfigString(raw)
+			if err != nil {
+				return Config{}, fmt.Errorf("line %d: %w", lineNo, err)
+			}
+			config.Himalaya = value
 		case "editor":
 			value, err := parseConfigString(raw)
 			if err != nil {
@@ -138,6 +194,88 @@ func parseConfig(content string) (Config, error) {
 		}
 	}
 	return config, nil
+}
+
+func parseAccountConfigField(entry *AccountConfig, key, raw string, lineNo int) error {
+	stringField := func() (string, error) {
+		value, err := parseConfigString(raw)
+		if err != nil {
+			return "", fmt.Errorf("line %d: %w", lineNo, err)
+		}
+		return value, nil
+	}
+
+	switch key {
+	case "provider":
+		value, err := stringField()
+		if err != nil {
+			return err
+		}
+		entry.Provider = strings.TrimSpace(strings.ToLower(value))
+	case "email":
+		value, err := stringField()
+		if err != nil {
+			return err
+		}
+		entry.Email = value
+	case "mailbox":
+		value, err := stringField()
+		if err != nil {
+			return err
+		}
+		entry.Mailbox = value
+	case "archive_folder":
+		value, err := stringField()
+		if err != nil {
+			return err
+		}
+		entry.ArchiveFolder = value
+	case "sync_policy":
+		value, err := stringField()
+		if err != nil {
+			return err
+		}
+		entry.SyncPolicy = strings.TrimSpace(strings.ToLower(value))
+	case "editor":
+		value, err := stringField()
+		if err != nil {
+			return err
+		}
+		entry.Editor = value
+	default:
+		return fmt.Errorf("line %d: unknown account config key %q", lineNo, key)
+	}
+	return nil
+}
+
+func applyBackendConfigValue(config *Config, value string) {
+	value = strings.TrimSpace(value)
+	switch strings.ToLower(value) {
+	case "", "himalaya", "native":
+		config.Backend = strings.ToLower(value)
+	default:
+		config.Backend = "himalaya"
+		config.Himalaya = value
+	}
+}
+
+func isCredentialConfigKey(key string) bool {
+	key = strings.TrimSpace(strings.ToLower(key))
+	key = strings.TrimPrefix(key, "oauth_")
+	if key == "" {
+		return false
+	}
+	parts := strings.FieldsFunc(key, func(r rune) bool {
+		return r == '.' || r == '-' || r == '_'
+	})
+	for _, part := range parts {
+		switch part {
+		case "password", "passwd", "secret":
+			return true
+		}
+	}
+	return key == "token" || strings.HasSuffix(key, "_token") || strings.HasSuffix(key, ".token") ||
+		strings.Contains(key, "access_token") || strings.Contains(key, "refresh_token") || strings.Contains(key, "id_token")
 }
 
 func normalizeConfigContent(content string) string {
@@ -174,4 +312,21 @@ func parseConfigString(raw string) (string, error) {
 		return "", errors.New("expected a quoted string")
 	}
 	return strings.TrimSpace(value), nil
+}
+
+func cliboxStatePath(path string) (string, error) {
+	if path = strings.TrimSpace(path); path != "" {
+		return expandHome(path)
+	}
+	if env := strings.TrimSpace(os.Getenv("CLIBOX_STATE")); env != "" {
+		return expandHome(env)
+	}
+	if xdg := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); xdg != "" {
+		return filepath.Join(xdg, "clibox", "clibox.db"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("could not find home directory: %w", err)
+	}
+	return filepath.Join(home, ".local", "state", "clibox", "clibox.db"), nil
 }

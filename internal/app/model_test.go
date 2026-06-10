@@ -536,6 +536,22 @@ func TestSetupRequiredErrorWithKnownEmailOpensSecretStep(t *testing.T) {
 	}
 }
 
+func TestSetupRequiredErrorWithNativeOAuthOpensReviewStep(t *testing.T) {
+	m := NewWithOptions(Options{backend: &oauthConfigurableBackend{}})
+	m.setupEmail = "freddy@gmail.com"
+	m.setupAccount = "gmail"
+	m.setupProvider = detectProvider(m.setupEmail)
+
+	next, _ := m.Update(inboxLoadedMsg{err: setupRequiredError{}})
+	updated := next.(model)
+	if updated.mode != setupView {
+		t.Fatalf("expected setup view, got %v", updated.mode)
+	}
+	if updated.setupStep != setupReviewStep {
+		t.Fatalf("expected setup to start at review step, got %v", updated.setupStep)
+	}
+}
+
 func TestSetupEmailDetectsProviderAndAccountName(t *testing.T) {
 	m := NewWithOptions(Options{backend: &configurableBackend{}})
 	m.mode = setupView
@@ -999,6 +1015,16 @@ func (b *configurableBackend) SaveAccountSetup(setup accountSetup) error {
 func (b *configurableBackend) WithAccount(account string) inboxBackend {
 	b.account = account
 	return b
+}
+
+type oauthConfigurableBackend struct {
+	configurableBackend
+	oauthSaved accountSetup
+}
+
+func (b *oauthConfigurableBackend) SaveOAuthAccountSetup(_ context.Context, setup accountSetup) error {
+	b.oauthSaved = setup
+	return nil
 }
 
 type pagedBackend struct {

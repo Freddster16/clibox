@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -95,6 +96,9 @@ func (m model) updateSetupReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.withStatus(provider.Name + " needs manual server settings before automatic setup can run"), nil
 		}
 		m.setupProvider = provider
+		if _, ok := m.backend.(oauthAccountSetupBackend); ok && providerNeedsOAuth(provider) {
+			return m.startOAuthAccountConfiguration()
+		}
 		m.setupStep = setupSecretStep
 		return m.withStatus("paste your " + strings.ToLower(provider.secretLabel()) + ", then press Enter"), nil
 	case "o":
@@ -224,6 +228,34 @@ func (m model) startAccountConfiguration() (tea.Model, tea.Cmd) {
 	m.status = "configuring " + provider.Name + " in the background..."
 	return m, func() tea.Msg {
 		err := backend.SaveAccountSetup(setup)
+		return accountConfiguredMsg{account: account, err: err}
+	}
+}
+
+func (m model) startOAuthAccountConfiguration() (tea.Model, tea.Cmd) {
+	account := sanitizeAccountName(m.setupAccount, "")
+	if account == "" {
+		return m.withStatus("type an account name first"), nil
+	}
+	backend, ok := m.backend.(oauthAccountSetupBackend)
+	if !ok {
+		return m.withStatus("this backend cannot configure browser OAuth accounts"), nil
+	}
+	m.setupAccount = account
+	m.configuring = true
+	provider := m.setupProvider
+	if provider.Name == "" {
+		provider = detectProvider(m.setupEmail)
+	}
+	setup := accountSetup{
+		Account:     account,
+		Email:       m.setupEmail,
+		DisplayName: displayNameFromEmail(m.setupEmail),
+		Provider:    provider,
+	}
+	m.status = "opening " + provider.Name + " browser login..."
+	return m, func() tea.Msg {
+		err := backend.SaveOAuthAccountSetup(context.Background(), setup)
 		return accountConfiguredMsg{account: account, err: err}
 	}
 }

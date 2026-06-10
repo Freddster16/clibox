@@ -155,7 +155,9 @@ func (m model) renderSetupReview(width, height int) string {
 			styles.readerBody.Width(width).Render("Click the link if your terminal supports it, or press o to open it."),
 		)
 	}
-	if provider.canAutoConfigure() {
+	if _, ok := m.backend.(oauthAccountSetupBackend); ok && providerNeedsOAuth(provider) {
+		lines = append(lines, styles.readerBody.Width(width).Render("Enter opens browser login. e edits email. n edits account name."))
+	} else if provider.canAutoConfigure() {
 		lines = append(lines, styles.readerBody.Width(width).Render("Enter continues to password setup. e edits email. n edits account name."))
 	} else {
 		lines = append(lines, styles.readerBody.Width(width).Render("Automatic setup for this provider needs manual server settings first. e edits email. n edits account name."))
@@ -447,6 +449,13 @@ func (m model) setupFooterHints() string {
 	}
 	switch m.setupStep {
 	case setupReviewStep:
+		provider := m.setupProvider
+		if provider.Name == "" {
+			provider = detectProvider(m.setupEmail)
+		}
+		if _, ok := m.backend.(oauthAccountSetupBackend); ok && providerNeedsOAuth(provider) {
+			return "enter browser login  o provider page  e edit email  n edit account name  q back"
+		}
 		return "o open provider page  enter setup  e edit email  n edit account name  q back"
 	case setupAccountStep:
 		return "type account name  enter review  backspace edit  q back"

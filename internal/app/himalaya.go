@@ -45,6 +45,11 @@ type accountSetupBackend interface {
 	WithAccount(account string) inboxBackend
 }
 
+type oauthAccountSetupBackend interface {
+	SaveOAuthAccountSetup(context.Context, accountSetup) error
+	WithAccount(account string) inboxBackend
+}
+
 type himalayaBackend struct {
 	binary                string
 	account               string
@@ -81,6 +86,10 @@ func Doctor(ctx context.Context, options Options) (string, error) {
 		return fmt.Sprintf("Email connection OK: loaded %d emails from %s", len(messages), options.backend.Label()), nil
 	}
 
+	if normalizeBackendMode(options.BackendMode) == backendModeNative {
+		backend := newNativeBackend(options)
+		return backend.Diagnose(ctx, options.Verbose)
+	}
 	backend := newHimalayaBackend(options)
 	return backend.Diagnose(ctx)
 }
