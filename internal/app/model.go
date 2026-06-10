@@ -289,10 +289,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if msg.page == 1 {
-			m.messages = msg.messages
-			m.cursor = 0
+			selectedID := ""
+			if len(m.messages) > 0 && !m.loading {
+				selectedID = m.selectedMessage().ID
+			}
+			m.messages = mergeMessagePage(nil, msg.messages)
+			if selectedID != "" {
+				m.cursor = indexMessageByID(m.messages, selectedID)
+			} else {
+				m.cursor = 0
+			}
 		} else {
-			m.messages = append(m.messages, msg.messages...)
+			m.messages = mergeMessagePage(m.messages, msg.messages)
 		}
 		if m.cursor >= len(m.messages) {
 			m.cursor = max(0, len(m.messages)-1)
@@ -897,6 +905,55 @@ func (m model) loadOlderMail() (model, tea.Cmd) {
 	}
 	m.loadingMore = true
 	return m.withStatus("loading older mail from " + m.scopeLabel() + "..."), m.loadInboxPage(m.nextPage, m.loadSerial)
+}
+
+func mergeMessagePage(existing, page []message) []message {
+	if len(page) == 0 {
+		return existing
+	}
+	merged := make([]message, 0, len(existing)+len(page))
+	seen := make(map[string]struct{}, len(existing)+len(page))
+	for _, msg := range existing {
+		key := messageDedupeKey(msg)
+		if key != "" {
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		merged = append(merged, msg)
+	}
+	for _, msg := range page {
+		key := messageDedupeKey(msg)
+		if key != "" {
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		merged = append(merged, msg)
+	}
+	return merged
+}
+
+func messageDedupeKey(msg message) string {
+	if id := strings.TrimSpace(msg.ID); id != "" {
+		return "id:" + id
+	}
+	return ""
+}
+
+func indexMessageByID(messages []message, id string) int {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return 0
+	}
+	for i, msg := range messages {
+		if strings.TrimSpace(msg.ID) == id {
+			return i
+		}
+	}
+	return 0
 }
 
 func (m model) previewSelectedMessage() (model, tea.Cmd) {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestInboxNavigation(t *testing.T) {
@@ -556,6 +557,7 @@ func TestPagedInboxShowsFirstPageThenLoadsOlderMail(t *testing.T) {
 			{ID: "2", From: "Bob", Subject: "Second"},
 		},
 		{
+			{ID: "2", From: "Bob", Subject: "Second"},
 			{ID: "3", From: "Cora", Subject: "Older"},
 		},
 	}}
@@ -598,7 +600,7 @@ func TestPagedInboxShowsFirstPageThenLoadsOlderMail(t *testing.T) {
 	next, cmd = updated.Update(second)
 	updated = next.(model)
 	if len(updated.messages) != 3 {
-		t.Fatalf("expected older page to append, got %+v", updated.messages)
+		t.Fatalf("expected older page to append without duplicate IDs, got %+v", updated.messages)
 	}
 	if updated.loadingMore {
 		t.Fatal("expected loadingMore to stop after last page")
@@ -614,6 +616,40 @@ func TestPagedInboxShowsFirstPageThenLoadsOlderMail(t *testing.T) {
 	}
 	if len(backend.calls) != 2 || backend.calls[0] != 1 || backend.calls[1] != 2 {
 		t.Fatalf("expected page calls 1,2; got %v", backend.calls)
+	}
+}
+
+func TestPageRefreshDedupesAndPreservesSelection(t *testing.T) {
+	m := NewWithOptions(Options{backend: &pagedBackend{}})
+	m.messages = []message{
+		{ID: "1", From: "Alice", Subject: "First"},
+		{ID: "2", From: "Bob", Subject: "Second"},
+	}
+	m.cursor = 1
+	m.loading = false
+	m.loadedAll = false
+	m.loadSerial = 7
+
+	next, _ := m.Update(inboxPageLoadedMsg{
+		page:   1,
+		serial: 7,
+		done:   false,
+		messages: []message{
+			{ID: "new", From: "News", Subject: "New message"},
+			{ID: "new", From: "News", Subject: "New message duplicate"},
+			{ID: "2", From: "Bob", Subject: "Second"},
+			{ID: "1", From: "Alice", Subject: "First"},
+		},
+	})
+	updated := next.(model)
+	if len(updated.messages) != 3 {
+		t.Fatalf("expected duplicate refresh IDs to be removed, got %+v", updated.messages)
+	}
+	if updated.cursor != 1 || updated.messages[updated.cursor].ID != "2" {
+		t.Fatalf("expected cursor to stay on message 2, cursor=%d messages=%+v", updated.cursor, updated.messages)
+	}
+	if updated.nextPage != 2 {
+		t.Fatalf("expected next page to remain page 2, got %d", updated.nextPage)
 	}
 }
 
@@ -1128,6 +1164,19 @@ func TestTerminalSafeTextRemovesControlSequences(t *testing.T) {
 	}
 	if got := terminalSafeLine("subject\nspoofed\x1b[2J"); got != "subject spoofed" {
 		t.Fatalf("unexpected sanitized line: %q", got)
+	}
+}
+
+func TestFitFramePadsEveryRenderedLine(t *testing.T) {
+	got := fitFrame("abc\nx", 5, 4)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 lines, got %d in %q", len(lines), got)
+	}
+	for i, line := range lines {
+		if width := lipgloss.Width(line); width != 5 {
+			t.Fatalf("line %d width = %d, want 5 in %q", i, width, got)
+		}
 	}
 }
 

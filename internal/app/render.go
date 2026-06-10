@@ -40,6 +40,7 @@ func (m model) renderCurrentView() string {
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	content = fitFrame(content, max(1, m.width), max(1, m.height))
 	return m.activeTheme().styles.screen.Width(m.width).Height(max(1, m.height)).Render(content)
 }
 

@@ -57,6 +57,24 @@ func fitHeight(value string, height int) string {
 	return strings.Join(lines, "\n")
 }
 
+func fitFrame(value string, width, height int) string {
+	width = max(1, width)
+	height = max(1, height)
+	lines := strings.Split(value, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for i, line := range lines {
+		if lineWidth := lipgloss.Width(line); lineWidth < width {
+			lines[i] = line + strings.Repeat(" ", width-lineWidth)
+		}
+	}
+	for len(lines) < height {
+		lines = append(lines, strings.Repeat(" ", width))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func styledLines(lines []string, style lipgloss.Style, width int) []string {
 	out := make([]string, 0, len(lines))
 	for _, line := range lines {
