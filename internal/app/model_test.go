@@ -1282,6 +1282,42 @@ func TestWideInboxViewFitsTerminalWidth(t *testing.T) {
 	}
 }
 
+func TestWideInboxFramePadsEveryLineAfterStyling(t *testing.T) {
+	m := newTestModel()
+	m.width = 120
+	m.height = 14
+	m.messages = []message{
+		{ID: "1", From: "ATTACK SHARK", Email: "support@example.com", Subject: "Summer sale", Date: "2026-06-10", Body: "old body", BodyLoaded: true},
+		{ID: "2", From: "Supabase", Email: "noreply@supabase.com", Subject: "Supa Update June 2026", Date: "2026-06-10", Body: "Everything that happened in the last month at Supabase", BodyLoaded: true},
+	}
+	m.cursor = 1
+
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) != m.height {
+		t.Fatalf("expected %d rows, got %d", m.height, len(lines))
+	}
+	for i, line := range lines {
+		if width := lipgloss.Width(line); width != m.width {
+			t.Fatalf("line %d width = %d, want %d in %q", i, width, m.width, line)
+		}
+	}
+}
+
+func TestLoadedPreviewDoesNotDuplicateSnippet(t *testing.T) {
+	m := newTestModel()
+	msg := message{
+		ID:         "1",
+		Preview:    "Upgrade your gear with our premier festival offers.",
+		Body:       "Upgrade your gear with our premier festival offers.\nEverything that happened in the last month.",
+		BodyLoaded: true,
+	}
+
+	text := m.messageBodyText(msg, true)
+	if strings.Count(text, "Upgrade your gear") != 1 {
+		t.Fatalf("expected loaded body to omit duplicate preview snippet, got %q", text)
+	}
+}
+
 func TestPreviewHeadersDoNotWrapLongSubjects(t *testing.T) {
 	m := newTestModel()
 	m.messages = []message{{

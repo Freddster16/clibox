@@ -1210,7 +1210,7 @@ func (m model) setMessageBodyError(id, message string) model {
 
 func (m model) messageBodyText(msg message, includePreview bool) string {
 	var parts []string
-	if includePreview && strings.TrimSpace(msg.Preview) != "" {
+	if includePreview && !messageBodyReady(msg) && strings.TrimSpace(msg.Preview) != "" {
 		parts = append(parts, msg.Preview)
 	}
 
