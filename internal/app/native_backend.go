@@ -258,14 +258,16 @@ func (n nativeBackend) searchOrListEnvelopePage(ctx context.Context, page int, q
 	}
 	defer store.close()
 
-	if err := n.syncEnvelopePage(ctx, store, account, mailbox, page, query); err != nil {
+	remoteDone, err := n.syncEnvelopePage(ctx, store, account, mailbox, page, query)
+	if err != nil {
 		cached, done, cacheErr := store.cachedEnvelopePage(ctx, account.Name, mailbox, page, n.effectivePageSize(), query)
 		if cacheErr == nil && len(cached) > 0 {
 			return cached, done, nil
 		}
 		return nil, false, err
 	}
-	return store.cachedEnvelopePage(ctx, account.Name, mailbox, page, n.effectivePageSize(), query)
+	messages, _, err := store.cachedEnvelopePage(ctx, account.Name, mailbox, page, n.effectivePageSize(), query)
+	return messages, remoteDone, err
 }
 
 func (n nativeBackend) ReadMessage(ctx context.Context, msg message) (string, error) {
@@ -419,59 +421,91 @@ func (n nativeBackend) moveMessage(ctx context.Context, account nativeAccount, m
 	return client.Expunge(nil)
 }
 
-func (n nativeBackend) syncEnvelopePage(ctx context.Context, store *nativeStore, account nativeAccount, mailbox string, page int, query string) error {
+func (n nativeBackend) syncEnvelopePage(ctx context.Context, store *nativeStore, account nativeAccount, mailbox string, page int, query string) (bool, error) {
 	client, err := n.connectIMAP(ctx, account)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer client.Logout()
 
 	status, err := client.Select(mailbox, true)
 	if err != nil {
-		return fmt.Errorf("could not open %s: %w", mailbox, err)
+		return false, fmt.Errorf("could not open %s: %w", mailbox, err)
 	}
 	_ = store.saveMailboxSync(ctx, account.Name, mailbox, status.UidValidity, status.UidNext)
 	if status.Messages == 0 {
-		return nil
+		return true, nil
 	}
 
 	seqset := new(imap.SeqSet)
 	byUID := false
+	remoteDone := false
 	pageSize := uint32(n.effectivePageSize()) // #nosec G115 -- effectivePageSize is bounded to a small positive request size.
 	if strings.TrimSpace(query) != "" {
 		criteria := imap.NewSearchCriteria()
 		criteria.Text = searchTerms(query)
 		uids, err := client.UidSearch(criteria)
 		if err != nil {
-			return fmt.Errorf("could not search mailbox: %w", err)
+			return false, fmt.Errorf("could not search mailbox: %w", err)
 		}
 		sort.Slice(uids, func(i, j int) bool { return uids[i] > uids[j] })
-		start := (max(1, page) - 1) * int(pageSize)
-		if start >= len(uids) {
-			return nil
+		start, end, done := nativePageWindow(len(uids), page, int(pageSize))
+		if start == end {
+			return true, nil
 		}
-		end := min(len(uids), start+int(pageSize))
+		remoteDone = done
 		seqset.AddNum(uids[start:end]...)
 		byUID = true
 	} else {
-		pageIndex := max(0, page-1)
-		offset := uint64(pageIndex) * uint64(pageSize) // #nosec G115 -- pageIndex is clamped non-negative and compared against the uint32 message count below.
-		if offset >= uint64(status.Messages) {
-			return nil
+		from, to, done, ok := nativeEnvelopeSeqRange(status.Messages, page, pageSize)
+		if !ok {
+			return true, nil
 		}
-		to := status.Messages - uint32(offset) // #nosec G115 -- offset is checked to be less than the uint32 message count.
-		from := uint32(1)
-		if to > pageSize {
-			from = to - pageSize + 1
-		}
+		remoteDone = done
 		seqset.AddRange(from, to)
 	}
 
 	messages, err := fetchNativeEnvelopes(client, seqset, byUID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return store.upsertEnvelopes(ctx, account.Name, mailbox, messages)
+	return remoteDone, store.upsertEnvelopes(ctx, account.Name, mailbox, messages)
+}
+
+func nativePageWindow(total, page, pageSize int) (int, int, bool) {
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	if total <= 0 {
+		return 0, 0, true
+	}
+	start := (max(1, page) - 1) * pageSize
+	if start >= total {
+		return 0, 0, true
+	}
+	end := min(total, start+pageSize)
+	return start, end, end >= total
+}
+
+func nativeEnvelopeSeqRange(total uint32, page int, pageSize uint32) (uint32, uint32, bool, bool) {
+	if pageSize == 0 {
+		pageSize = 50
+	}
+	if total == 0 {
+		return 0, 0, true, false
+	}
+	pageIndex := max(0, page-1)
+	offset := uint64(pageIndex) * uint64(pageSize) // #nosec G115 -- pageIndex is clamped non-negative and compared against the uint32 message count below.
+	if offset >= uint64(total) {
+		return 0, 0, true, false
+	}
+	to := total - uint32(offset) // #nosec G115 -- offset is checked to be less than the uint32 message count.
+	from := uint32(1)
+	if to > pageSize {
+		from = to - pageSize + 1
+	}
+	done := offset+uint64(pageSize) >= uint64(total)
+	return from, to, done, true
 }
 
 func fetchNativeEnvelopes(client *imapclient.Client, seqset *imap.SeqSet, byUID bool) ([]message, error) {
