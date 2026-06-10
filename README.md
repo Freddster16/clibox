@@ -30,8 +30,9 @@ j/k move  enter read  R refresh  A account  r reply  c compose  a archive  / sea
 ## What It Does
 
 - Opens a real email inbox in a Bubble Tea terminal UI.
-- Shows the newest mail first, then keeps loading older mail in the background.
-- Reads plain-text message bodies on demand.
+- Shows the newest mail first and lets you load older pages when you need them.
+- Previews the selected email in the wide reader pane, then opens the full
+  reader with `Enter`.
 - Composes and replies in your editor using `CLIBOX_EDITOR`, `VISUAL`,
   `EDITOR`, or `nvim`.
 - Sends only after a review screen.
@@ -105,9 +106,9 @@ stored in the OS credential store.
 
 | Key | Action |
 | --- | --- |
-| `Tab` | Move focus between the mailbox rail and message list |
-| `j` / `k` | Move in the inbox or scroll in the reader |
-| `Enter` | Open the selected email or focused mailbox |
+| `Tab` | Focus the mailbox rail; when focused, move to the next mailbox |
+| `j` / `k` | Move in the inbox, choose a mailbox, or scroll in the reader |
+| `Enter` | Open the selected email in the full reader or open the focused mailbox |
 | `PgUp` / `PgDn` | Jump through an open email |
 | `Home` / `End` | Jump to the top or bottom of an open email |
 | `b` / `Esc` | Go back |
@@ -129,19 +130,23 @@ stored in the OS credential store.
 Use the mailbox rail on the left side of the TUI to move between folders:
 
 1. Press `Tab` to focus the mailbox rail.
-2. Press `j` or `k` to choose `Inbox`, `Unread`, `Archive`, `Sent`, `Drafts`,
-   or `Trash`.
+2. Press `Tab`, `j`, or `k` to choose `Inbox`, `Unread`, `Archive`, `Sent`,
+   `Drafts`, or `Trash`.
 3. Press `Enter` to open the selected mailbox or filter.
-4. Press `Tab`, `Esc`, `b`, or the right arrow to return focus to the message
-   list.
+4. Press `Esc`, `b`, or the right arrow to return focus to the message list.
 
 `Unread` is an unread-only view of your inbox. From `Unread`, press `Esc` to go
 back to all inbox mail.
 
 Large inboxes are handled page by page. The newest page appears first so the app
-feels responsive, and older mail continues loading in the background until the
-mailbox is complete. `--page-size` changes the request size; it is not an inbox
+feels responsive. When you reach the bottom of the loaded list, press `j` again
+to load older mail. `--page-size` changes the request size; it is not an inbox
 limit.
+
+On wide terminals, the right-hand reader pane previews the selected email
+automatically. Press `Enter` only when you want to open that email in the full
+reader. The app checks the newest page for new mail every 30 seconds while the
+inbox is idle; press `R` to refresh immediately.
 
 ## Useful Commands
 

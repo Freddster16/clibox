@@ -153,6 +153,9 @@ func newHimalayaBackend(options Options) himalayaBackend {
 	binary := firstNonEmpty(options.Himalaya, os.Getenv("CLIBOX_HIMALAYA"), "himalaya")
 	mailbox := firstNonEmpty(options.Mailbox, "INBOX")
 	pageSize := options.PageSize
+	if pageSize <= 0 {
+		pageSize = 50
+	}
 	archiveFolder := firstNonEmpty(options.ArchiveFolder, os.Getenv("CLIBOX_ARCHIVE_FOLDER"))
 	trashFolder := strings.TrimSpace(os.Getenv("CLIBOX_TRASH_FOLDER"))
 	archiveExplicit := strings.TrimSpace(archiveFolder) != ""
@@ -412,10 +415,10 @@ func (h himalayaBackend) listCandidates(page int, query string) [][]string {
 }
 
 func (h himalayaBackend) readCandidates(id string) [][]string {
-	v1 := appendFlags([]string{"message", "read", "--no-headers"}, "--account", h.account, "--folder", h.mailbox)
+	v1 := appendFlags([]string{"message", "read", "--preview", "--no-headers"}, "--account", h.account, "--folder", h.mailbox)
 	v1 = append(v1, id)
 
-	v2 := []string{"messages", "read", "--no-headers"}
+	v2 := []string{"messages", "read", "--preview", "--no-headers"}
 	if strings.TrimSpace(h.account) != "" {
 		v2 = append(v2, "-a", h.account)
 	}

@@ -171,6 +171,7 @@ func (m model) reloadMailbox(status string) (model, tea.Cmd) {
 	m.loading = true
 	m.loadingMore = false
 	m.loadedAll = false
+	m.nextPage = 1
 	m.loadingMessageID = ""
 	m.readerOffset = 0
 	m.messages = nil

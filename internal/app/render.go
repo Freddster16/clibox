@@ -356,6 +356,8 @@ func (m model) renderRows(width, height int) []string {
 	}
 	if m.loadingMore && end == len(m.messages) && len(rows) < visible {
 		rows = append(rows, styles.muted.Width(width).Render(truncate("  Loading older mail...", width)))
+	} else if !m.loadedAll && end == len(m.messages) && len(rows) < visible {
+		rows = append(rows, styles.muted.Width(width).Render(truncate("  Press j to load older mail...", width)))
 	}
 
 	return rows
@@ -444,7 +446,7 @@ func (m model) renderMessage(width, height int, includePreview bool) string {
 func (m model) renderFooter() string {
 	styles := m.activeTheme().styles
 	themeHint := fmt.Sprintf("theme %s: t themes", m.activeTheme().name)
-	hints := themeHint + "  |  tab mailboxes  j/k move  enter read  R refresh  A account  r reply  c compose  a archive  / search  ? help  q quit"
+	hints := themeHint + "  |  tab mailboxes  j/k move  enter full reader  R refresh  A account  r reply  c compose  a archive  / search  ? help  q quit"
 	if m.mode == readerView {
 		hints = themeHint + "  |  j/k scroll  b back  r reply  a archive  d delete  ? help  q back"
 	} else if m.mode == setupView {
@@ -455,7 +457,7 @@ func (m model) renderFooter() string {
 			hints = "sending email..."
 		}
 	} else if m.mailboxFocused {
-		hints = "mailboxes  |  j/k choose  enter open  tab/right messages  R refresh  ? help  q quit"
+		hints = "mailboxes  |  tab/j/k choose  enter open  right messages  R refresh  ? help  q quit"
 	} else if m.searching {
 		hints = "search: " + m.searchInput + "_  |  enter apply  esc cancel  ctrl+u clear"
 	} else if m.confirmDelete {
@@ -463,9 +465,9 @@ func (m model) renderFooter() string {
 	} else if m.action.Running {
 		hints = m.action.Kind.presentParticiple() + " email..."
 	} else if strings.TrimSpace(m.searchQuery) != "" && m.mode == inboxView {
-		hints = themeHint + "  |  tab mailboxes  / search again  esc clear search  j/k move  enter read  a archive  d delete  R refresh  ? help"
+		hints = themeHint + "  |  tab mailboxes  / search again  esc clear search  j/k move  enter full reader  a archive  d delete  R refresh  ? help"
 	} else if m.mailboxFilter == unreadMailFilter && m.mode == inboxView {
-		hints = themeHint + "  |  tab mailboxes  esc all mail  j/k move  enter read  / search  R refresh  ? help"
+		hints = themeHint + "  |  tab mailboxes  esc all mail  j/k move  enter full reader  / search  R refresh  ? help"
 	}
 	if m.status != "" {
 		hints = m.status + "  |  " + hints
@@ -502,9 +504,10 @@ func (m model) overlayHelp(content string) string {
 		"Theme      " + m.activeTheme().name,
 		"",
 		"Tab        focus mailboxes",
+		"Tab        next mailbox when mailboxes are focused",
 		"Enter      open selected mailbox/filter",
-		"j / k      move in inbox",
-		"Enter      open selected email",
+		"j / k      move in inbox; at bottom j loads older mail",
+		"Enter      open selected email in full reader",
 		"j / k      scroll in reader",
 		"PgUp/PgDn  jump in reader",
 		"b / Esc    back to inbox",

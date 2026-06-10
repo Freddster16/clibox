@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+const mailboxRefreshInterval = 30 * time.Second
 
 type viewMode int
 
@@ -54,6 +57,8 @@ type messageBodyLoadedMsg struct {
 	serial int
 	err    error
 }
+
+type mailboxRefreshTickMsg struct{}
 
 type accountConfiguredMsg struct {
 	account string
@@ -117,6 +122,7 @@ type model struct {
 	loading           bool
 	loadingMore       bool
 	loadedAll         bool
+	nextPage          int
 	loadSerial        int
 	loadingMessageID  string
 	messageLoadSerial int
@@ -209,7 +215,13 @@ func NewWithOptions(options Options) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return m.loadInbox()
+	return tea.Batch(m.loadInbox(), mailboxRefreshTick())
+}
+
+func mailboxRefreshTick() tea.Cmd {
+	return tea.Tick(mailboxRefreshInterval, func(time.Time) tea.Msg {
+		return mailboxRefreshTickMsg{}
+	})
 }
 
 func (m model) setupStepAfterSetupRequired() setupStep {
@@ -231,6 +243,17 @@ func (m model) setupStepAfterSetupRequired() setupStep {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case mailboxRefreshTickMsg:
+		cmd := mailboxRefreshTick()
+		if m.mode != inboxView || m.mailboxFocused || m.loading || m.loadingMore || m.searching || m.confirmDelete || m.action.Running {
+			return m, cmd
+		}
+		m.loadSerial++
+		m.loading = len(m.messages) == 0
+		m.loadingMore = false
+		m.nextPage = 1
+		m.status = "checking for new mail..."
+		return m, tea.Batch(cmd, m.loadInbox())
 	case inboxPageLoadedMsg:
 		if msg.serial != m.loadSerial {
 			return m, nil
@@ -277,6 +300,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if msg.done {
 			m.loadedAll = true
+			m.nextPage = 0
 			if len(m.messages) == 0 {
 				if m.mailboxFilter == unreadMailFilter {
 					return m.withStatus("No unread emails found in " + m.mailboxLabel()), nil
@@ -286,15 +310,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m.withStatus("No emails found in " + m.mailboxLabel()), nil
 			}
-			return m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.scopeLabel())), nil
+			m = m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.scopeLabel()))
+			return m.previewSelectedMessage()
 		}
 
-		m.loadingMore = true
-		return m.withStatus(fmt.Sprintf("loaded %d emails from %s; loading older mail in the background...", len(m.messages), m.scopeLabel())), m.loadInboxPage(msg.page+1, msg.serial)
+		m.loadedAll = false
+		m.nextPage = msg.page + 1
+		m = m.withStatus(fmt.Sprintf("loaded %d emails from %s; press j at the bottom for older mail", len(m.messages), m.scopeLabel()))
+		return m.previewSelectedMessage()
 	case inboxLoadedMsg:
 		m.loading = false
 		m.loadingMore = false
 		m.loadedAll = true
+		m.nextPage = 0
 		if msg.err != nil {
 			if isSetupRequiredError(msg.err) {
 				m.mode = setupView
@@ -335,7 +363,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cursor < 0 {
 			m.cursor = 0
 		}
-		return m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.scopeLabel())), nil
+		m = m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.scopeLabel()))
+		return m.previewSelectedMessage()
 	case messageBodyLoadedMsg:
 		if msg.serial != m.messageLoadSerial {
 			return m, nil
@@ -343,10 +372,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loadingMessageID = ""
 		if msg.err != nil {
 			m = m.setMessageBodyError(msg.id, oneLine(msg.err.Error()))
-			return m.withStatus("could not load email: " + oneLine(msg.err.Error())), nil
+			if m.mode == readerView {
+				return m.withStatus("could not load email: " + oneLine(msg.err.Error())), nil
+			}
+			return m.withStatus("could not preview email: " + oneLine(msg.err.Error())), nil
 		}
 		m = m.setMessageBody(msg.id, msg.body)
-		return m.withStatus("email loaded"), nil
+		if m.mode == readerView {
+			return m.withStatus("email loaded"), nil
+		}
+		return m.withStatus(""), nil
 	case accountConfiguredMsg:
 		m.configuring = false
 		if msg.err != nil {
@@ -364,6 +399,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		m.loadingMore = false
 		m.loadedAll = false
+		m.nextPage = 1
 		m.messages = nil
 		m.cursor = 0
 		m.loadSerial++
@@ -445,7 +481,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		return m, nil
+		return m.previewSelectedMessage()
 	case tea.KeyMsg:
 		key := msg.String()
 
@@ -522,7 +558,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == inboxView {
 				m.mailboxFocused = true
 				m.mailboxCursor = m.activeMailboxEntryIndex()
-				return m.withStatus("mailboxes focused; j/k choose, Enter opens, Tab returns to messages"), nil
+				return m.withStatus("mailboxes focused; Tab or j/k choose, Enter opens, right returns to messages"), nil
 			}
 		case "up", "k":
 			if m.mode == readerView {
@@ -531,6 +567,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.mode == inboxView && m.cursor > 0 {
 				m.cursor--
 				m.status = ""
+				return m.previewSelectedMessage()
 			}
 		case "down", "j":
 			if m.mode == readerView {
@@ -539,6 +576,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.mode == inboxView && m.cursor < len(m.messages)-1 {
 				m.cursor++
 				m.status = ""
+				return m.previewSelectedMessage()
+			} else if m.mode == inboxView && len(m.messages) > 0 {
+				return m.loadOlderMail()
 			}
 		case "pgup":
 			if m.mode == readerView {
@@ -611,13 +651,15 @@ func (m model) updateMailboxRail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.showHelp = true
-	case "tab", "right", "esc", "b":
+	case "right", "esc", "b":
 		m.mailboxFocused = false
 		return m.withStatus("message list focused"), nil
 	case "up", "k":
 		return m.moveMailboxCursor(-1), nil
-	case "down", "j":
+	case "down", "j", "tab":
 		return m.moveMailboxCursor(1), nil
+	case "shift+tab", "backtab":
+		return m.moveMailboxCursor(-1), nil
 	case "enter":
 		return m.activateMailboxEntry()
 	case "R":
@@ -843,6 +885,40 @@ func (m model) loadInboxPage(page, serial int) tea.Cmd {
 	return m.loadInbox()
 }
 
+func (m model) loadOlderMail() (model, tea.Cmd) {
+	if m.loadedAll {
+		return m.withStatus("all loaded from " + m.scopeLabel()), nil
+	}
+	if m.loadingMore {
+		return m, nil
+	}
+	if m.nextPage <= 1 {
+		m.nextPage = 2
+	}
+	m.loadingMore = true
+	return m.withStatus("loading older mail from " + m.scopeLabel() + "..."), m.loadInboxPage(m.nextPage, m.loadSerial)
+}
+
+func (m model) previewSelectedMessage() (model, tea.Cmd) {
+	if m.mode != inboxView || m.width < 96 || m.mailboxFocused || len(m.messages) == 0 {
+		return m, nil
+	}
+	msg := m.selectedMessage()
+	if messageBodyReady(msg) || strings.TrimSpace(msg.BodyError) != "" || strings.TrimSpace(msg.ID) == "" {
+		return m, nil
+	}
+	if m.loadingMessageID == msg.ID {
+		return m, nil
+	}
+	backend, ok := m.backend.(messageBodyBackend)
+	if !ok {
+		return m, nil
+	}
+	m.messageLoadSerial++
+	m.loadingMessageID = msg.ID
+	return m, m.loadMessageBody(backend, msg, m.messageLoadSerial)
+}
+
 func (m model) openSelectedMessage() (model, tea.Cmd) {
 	if len(m.messages) == 0 {
 		return m.withStatus("No email selected"), nil
@@ -855,6 +931,9 @@ func (m model) openSelectedMessage() (model, tea.Cmd) {
 	msg := m.messages[index]
 	if messageBodyReady(msg) {
 		return m.withStatus(""), nil
+	}
+	if m.loadingMessageID == msg.ID {
+		return m.withStatus("Loading email..."), nil
 	}
 
 	backend, ok := m.backend.(messageBodyBackend)
@@ -934,7 +1013,7 @@ func (m model) messageBodyText(msg message, includePreview bool) string {
 	case messageBodyReady(msg):
 		parts = append(parts, msg.Body)
 	case includePreview:
-		parts = append(parts, "Press Enter to read this email.")
+		parts = append(parts, "Loading preview...")
 	default:
 		parts = append(parts, "Loading email...")
 	}

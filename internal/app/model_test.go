@@ -328,7 +328,7 @@ func TestMailboxRailCanOpenUnreadView(t *testing.T) {
 	if !m.mailboxFocused {
 		t.Fatal("expected tab to focus mailbox rail")
 	}
-	m = pressKey(t, m, "j")
+	m = pressKey(t, m, "tab")
 	if m.mailboxCursor != 1 {
 		t.Fatalf("expected mailbox cursor on Unread, got %d", m.mailboxCursor)
 	}
@@ -561,17 +561,37 @@ func TestPagedInboxShowsFirstPageThenLoadsOlderMail(t *testing.T) {
 	}}
 	m := NewWithOptions(Options{backend: backend})
 
-	first := m.Init()().(inboxPageLoadedMsg)
+	first := inboxPageFromCmd(t, m.Init())
 	next, cmd := m.Update(first)
 	updated := next.(model)
 	if len(updated.messages) != 2 {
 		t.Fatalf("expected first page to render immediately, got %+v", updated.messages)
 	}
+	if updated.loadingMore {
+		t.Fatal("expected older mail to wait until the user reaches the bottom")
+	}
+	if updated.loadedAll {
+		t.Fatal("expected first page not to mark the mailbox complete")
+	}
+	if updated.nextPage != 2 {
+		t.Fatalf("expected next page to be 2, got %d", updated.nextPage)
+	}
+	if cmd != nil {
+		t.Fatal("expected no automatic older-mail command")
+	}
+
+	next, cmd = updated.Update(keyMsg("j"))
+	updated = next.(model)
+	if cmd != nil {
+		t.Fatal("expected first j to move to the bottom without loading")
+	}
+	next, cmd = updated.Update(keyMsg("j"))
+	updated = next.(model)
 	if !updated.loadingMore {
-		t.Fatal("expected model to keep loading older mail")
+		t.Fatal("expected j at the bottom to load older mail")
 	}
 	if cmd == nil {
-		t.Fatal("expected next page command")
+		t.Fatal("expected older page command")
 	}
 
 	second := cmd().(inboxPageLoadedMsg)
@@ -588,6 +608,92 @@ func TestPagedInboxShowsFirstPageThenLoadsOlderMail(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Fatal("expected no more page command")
+	}
+	if updated.nextPage != 0 {
+		t.Fatalf("expected next page to be cleared after complete load, got %d", updated.nextPage)
+	}
+	if len(backend.calls) != 2 || backend.calls[0] != 1 || backend.calls[1] != 2 {
+		t.Fatalf("expected page calls 1,2; got %v", backend.calls)
+	}
+}
+
+func TestWideInboxPreviewsSelectedMessage(t *testing.T) {
+	backend := &bodyBackend{body: "Preview body"}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = []message{
+		{ID: "1", From: "Alice", Subject: "First", Unread: true},
+		{ID: "2", From: "Bob", Subject: "Second", Unread: true},
+	}
+	m.loading = false
+
+	next, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	updated := next.(model)
+	if cmd == nil {
+		t.Fatal("expected wide inbox to start preview loading")
+	}
+	if updated.loadingMessageID != "1" {
+		t.Fatalf("expected first message preview to load, got %q", updated.loadingMessageID)
+	}
+
+	loaded := cmd().(messageBodyLoadedMsg)
+	next, _ = updated.Update(loaded)
+	updated = next.(model)
+	if !updated.messages[0].BodyLoaded || updated.messages[0].Body != "Preview body" {
+		t.Fatalf("expected first message body to be cached, got %+v", updated.messages[0])
+	}
+	if !updated.messages[0].Unread {
+		t.Fatal("expected preview loading to leave unread state alone")
+	}
+
+	backend.body = "Second preview"
+	next, cmd = updated.Update(keyMsg("j"))
+	updated = next.(model)
+	if updated.cursor != 1 {
+		t.Fatalf("expected cursor to move to second message, got %d", updated.cursor)
+	}
+	if cmd == nil {
+		t.Fatal("expected moving selection to load the next preview")
+	}
+	loaded = cmd().(messageBodyLoadedMsg)
+	next, _ = updated.Update(loaded)
+	updated = next.(model)
+	if !updated.messages[1].BodyLoaded || updated.messages[1].Body != "Second preview" {
+		t.Fatalf("expected second message body to be cached, got %+v", updated.messages[1])
+	}
+	if backend.reads != 2 {
+		t.Fatalf("expected two preview reads, got %d", backend.reads)
+	}
+}
+
+func TestMailboxRefreshTickReloadsNewestPage(t *testing.T) {
+	backend := &pagedBackend{pages: [][]message{
+		{
+			{ID: "fresh", From: "News", Subject: "New arrival"},
+		},
+	}}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = []message{{ID: "old", From: "Old", Subject: "Already shown"}}
+	m.loading = false
+	m.loadedAll = false
+	m.nextPage = 3
+
+	next, cmd := m.Update(mailboxRefreshTickMsg{})
+	updated := next.(model)
+	if cmd == nil {
+		t.Fatal("expected refresh tick to schedule work")
+	}
+	if updated.nextPage != 1 {
+		t.Fatalf("expected refresh to reset next page to 1, got %d", updated.nextPage)
+	}
+	if updated.status != "checking for new mail..." {
+		t.Fatalf("expected checking status, got %q", updated.status)
+	}
+
+	loaded := inboxPageFromBatchCmd(t, cmd, 1)
+	next, _ = updated.Update(loaded)
+	updated = next.(model)
+	if len(updated.messages) != 1 || updated.messages[0].ID != "fresh" {
+		t.Fatalf("expected newest page after refresh, got %+v", updated.messages)
 	}
 }
 
@@ -1308,6 +1414,52 @@ func (b *mailboxSwitchTestBackend) WithMailbox(mailbox string) inboxBackend {
 
 func (b *mailboxSwitchTestBackend) Label() string {
 	return "mailbox switch fake"
+}
+
+func inboxPageFromCmd(t *testing.T, cmd tea.Cmd) inboxPageLoadedMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected inbox page command")
+	}
+	msg := cmd()
+	switch msg := msg.(type) {
+	case inboxPageLoadedMsg:
+		return msg
+	case tea.BatchMsg:
+		return inboxPageFromBatchMsg(t, msg, 0)
+	default:
+		t.Fatalf("expected inboxPageLoadedMsg, got %T", msg)
+		return inboxPageLoadedMsg{}
+	}
+}
+
+func inboxPageFromBatchCmd(t *testing.T, cmd tea.Cmd, index int) inboxPageLoadedMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected batch command")
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected tea.BatchMsg, got %T", msg)
+	}
+	return inboxPageFromBatchMsg(t, batch, index)
+}
+
+func inboxPageFromBatchMsg(t *testing.T, batch tea.BatchMsg, index int) inboxPageLoadedMsg {
+	t.Helper()
+	if index < 0 || index >= len(batch) {
+		t.Fatalf("batch index %d out of range for %d commands", index, len(batch))
+	}
+	if batch[index] == nil {
+		t.Fatalf("batch command %d is nil", index)
+	}
+	msg := batch[index]()
+	loaded, ok := msg.(inboxPageLoadedMsg)
+	if !ok {
+		t.Fatalf("expected inboxPageLoadedMsg, got %T", msg)
+	}
+	return loaded
 }
 
 func keyMsg(key string) tea.KeyMsg {

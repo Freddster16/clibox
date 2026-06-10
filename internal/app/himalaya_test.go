@@ -209,6 +209,13 @@ func TestHimalayaBackendOmitsPageSizeWhenUnset(t *testing.T) {
 	}
 }
 
+func TestNewHimalayaBackendDefaultsPageSize(t *testing.T) {
+	backend := newHimalayaBackend(Options{})
+	if backend.pageSize != 50 {
+		t.Fatalf("expected default page size 50, got %d", backend.pageSize)
+	}
+}
+
 func TestHimalayaDoctorChecksOnePage(t *testing.T) {
 	runner := &fakeCommandRunner{results: []fakeCommandResult{
 		{
@@ -453,7 +460,7 @@ func TestHimalayaBackendReadsMessageBody(t *testing.T) {
 	if len(runner.calls) != 1 {
 		t.Fatalf("expected one read command, got %v", runner.calls)
 	}
-	want := "himalaya message read --no-headers --account personal --folder INBOX 42"
+	want := "himalaya message read --preview --no-headers --account personal --folder INBOX 42"
 	if runner.calls[0] != want {
 		t.Fatalf("unexpected read command:\nwant %q\ngot  %q", want, runner.calls[0])
 	}
@@ -486,7 +493,7 @@ func TestHimalayaBackendReadFallsBackToV2Shape(t *testing.T) {
 	if len(runner.calls) != 2 {
 		t.Fatalf("expected two command attempts, got %v", runner.calls)
 	}
-	want := "himalaya messages read --no-headers -a personal -m INBOX 99"
+	want := "himalaya messages read --preview --no-headers -a personal -m INBOX 99"
 	if runner.calls[1] != want {
 		t.Fatalf("unexpected fallback read command:\nwant %q\ngot  %q", want, runner.calls[1])
 	}
