@@ -217,6 +217,24 @@ go build ./...
 go vet ./...
 ```
 
+### Architecture
+
+The app is structured so the TUI stays light and mail-specific complexity stays
+behind small boundaries:
+
+- `internal/app/backend.go` defines the app-owned backend contracts.
+- `internal/app/model.go` routes Bubble Tea events.
+- `internal/app/model_inbox_update.go` and `internal/app/model_mail.go` handle
+  inbox pagination, async loading, dedupe, and reader body hydration.
+- `internal/app/render*.go` contains screen-specific rendering.
+- `internal/app/native_mime.go` and `internal/app/native_address.go` keep MIME,
+  inline image, and address parsing outside the native backend coordinator.
+- `internal/app/himalaya.go` and `internal/app/native_backend.go` are backend
+  adapters.
+
+The full code layout and production guardrails live in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
