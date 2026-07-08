@@ -89,6 +89,111 @@ func TestOpenReaderLoadsBodyAndCachesIt(t *testing.T) {
 	}
 }
 
+func TestOpenReaderMarksMessageReadOnBackend(t *testing.T) {
+	backend := &flagBackend{bodyBackend: bodyBackend{body: "Body"}}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = testMessages()
+	m.messages[0].Body = "Body"
+	m.messages[0].BodyLoaded = true
+	m.messages[0].Unread = true
+	m.loading = false
+
+	next, cmd := m.Update(keyMsg("enter"))
+	updated := next.(model)
+	if updated.messages[0].Unread {
+		t.Fatal("expected opening to mark the message read locally")
+	}
+	if cmd == nil {
+		t.Fatal("expected open to fire a mark-read command for an unread message")
+	}
+	if _, ok := cmd().(messageMarkedReadMsg); !ok {
+		t.Fatalf("expected mark-read message, got %T", cmd())
+	}
+	if len(backend.markedRead) != 1 || backend.markedRead[0] != "1" {
+		t.Fatalf("expected backend MarkMessageRead for id 1, got %v", backend.markedRead)
+	}
+
+	updated = pressKey(t, updated, "b")
+	next, cmd = updated.Update(keyMsg("enter"))
+	updated = next.(model)
+	if cmd != nil {
+		t.Fatal("expected reopen of an already-read message not to mark read again")
+	}
+	if len(backend.markedRead) != 1 {
+		t.Fatalf("expected no second mark-read, got %v", backend.markedRead)
+	}
+}
+
+func TestToggleReadUnreadFlipsStateAndCallsBackend(t *testing.T) {
+	backend := &flagBackend{bodyBackend: bodyBackend{body: "Body"}}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = testMessages()
+	m.messages[0].Unread = false
+	m.messages[0].BodyLoaded = true
+	m.loading = false
+
+	next, cmd := m.Update(keyMsg("m"))
+	updated := next.(model)
+	if !updated.messages[0].Unread {
+		t.Fatal("expected toggle to mark read message as unread")
+	}
+	if cmd == nil {
+		t.Fatal("expected toggle to fire a command")
+	}
+	cmd()
+	if len(backend.markedUnread) != 1 || backend.markedUnread[0] != "1" {
+		t.Fatalf("expected backend MarkMessageUnread for id 1, got %v", backend.markedUnread)
+	}
+
+	next, cmd = updated.Update(keyMsg("m"))
+	updated = next.(model)
+	if updated.messages[0].Unread {
+		t.Fatal("expected second toggle to mark unread message as read")
+	}
+	if cmd == nil {
+		t.Fatal("expected second toggle to fire a command")
+	}
+	cmd()
+	if len(backend.markedRead) != 1 || backend.markedRead[0] != "1" {
+		t.Fatalf("expected backend MarkMessageRead for id 1, got %v", backend.markedRead)
+	}
+}
+
+func TestToggleFlaggedFlipsStateAndCallsBackend(t *testing.T) {
+	backend := &flagBackend{bodyBackend: bodyBackend{body: "Body"}}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = testMessages()
+	m.messages[0].Flagged = false
+	m.messages[0].BodyLoaded = true
+	m.loading = false
+
+	next, cmd := m.Update(keyMsg("s"))
+	updated := next.(model)
+	if !updated.messages[0].Flagged {
+		t.Fatal("expected toggle to flag the message")
+	}
+	if cmd == nil {
+		t.Fatal("expected toggle to fire a command")
+	}
+	cmd()
+	if len(backend.flaggedIDs) != 1 || backend.flaggedIDs[0] != "1" {
+		t.Fatalf("expected backend SetMessageFlagged(true) for id 1, got %v", backend.flaggedIDs)
+	}
+
+	next, cmd = updated.Update(keyMsg("s"))
+	updated = next.(model)
+	if updated.messages[0].Flagged {
+		t.Fatal("expected second toggle to unflag the message")
+	}
+	if cmd == nil {
+		t.Fatal("expected second toggle to fire a command")
+	}
+	cmd()
+	if len(backend.unflaggedIDs) != 1 || backend.unflaggedIDs[0] != "1" {
+		t.Fatalf("expected backend SetMessageFlagged(false) for id 1, got %v", backend.unflaggedIDs)
+	}
+}
+
 func TestReaderScrollsBody(t *testing.T) {
 	m := newTestModel()
 	m.mode = readerView
@@ -505,6 +610,66 @@ func TestReplyDraftFlowUsesSelectedMessage(t *testing.T) {
 	}
 }
 
+func TestForwardDraftFlowUsesSelectedMessage(t *testing.T) {
+	backend := &draftFlowBackend{
+		draft: "From: Freddy <freddy@example.com>\nTo: \nSubject: Fwd: Design notes\n\n--------- Forwarded message ---------\nFrom: Alice\n\nold body\n",
+	}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = testMessages()
+	m.mode = readerView
+	m.loading = false
+
+	next, cmd := m.Update(keyMsg("f"))
+	updated := next.(model)
+	if cmd == nil {
+		t.Fatal("expected forward to prepare a draft")
+	}
+	prepared := cmd().(draftPreparedMsg)
+	defer removeDraftFile(prepared.path)
+
+	if backend.request.Kind != forwardDraft {
+		t.Fatalf("expected forward draft request, got %v", backend.request.Kind)
+	}
+	if backend.request.Message.ID != "1" {
+		t.Fatalf("expected selected message in forward request, got %+v", backend.request.Message)
+	}
+
+	next, _ = updated.Update(prepared)
+	updated = next.(model)
+	if updated.mode != draftReviewView {
+		t.Fatalf("expected draft review view, got %v", updated.mode)
+	}
+	if updated.draft.Focus != draftFieldTo {
+		t.Fatalf("expected forward to focus To field, got %v", updated.draft.Focus)
+	}
+	if !strings.Contains(updated.draft.Summary.Subject, "Fwd:") {
+		t.Fatalf("expected Fwd: subject in summary, got %+v", updated.draft.Summary)
+	}
+	if !strings.Contains(updated.draft.Summary.Body, "Forwarded message") {
+		t.Fatalf("expected forwarded body in summary, got %+v", updated.draft.Summary)
+	}
+}
+
+func TestForwardRequiresReaderView(t *testing.T) {
+	backend := &draftFlowBackend{}
+	m := NewWithOptions(Options{backend: backend})
+	m.messages = testMessages()
+	m.mode = inboxView
+	m.loading = false
+
+	next, cmd := m.Update(keyMsg("f"))
+	updated := next.(model)
+	if cmd != nil {
+		t.Fatal("expected forward from inbox to produce no command")
+	}
+	if updated.mode != inboxView {
+		t.Fatalf("expected to stay in inbox view, got %v", updated.mode)
+	}
+	if backend.request.Kind == forwardDraft {
+		t.Fatal("expected no draft request when forwarding from inbox")
+	}
+}
+
 func TestDraftReviewRequiresRecipientBeforeSending(t *testing.T) {
 	backend := &draftFlowBackend{}
 	m := NewWithOptions(Options{backend: backend})
@@ -717,6 +882,64 @@ func TestPageRefreshDedupesAndPreservesSelection(t *testing.T) {
 	}
 	if updated.nextPage != 2 {
 		t.Fatalf("expected next page to remain page 2, got %d", updated.nextPage)
+	}
+}
+
+func TestLastSessionRestoresReaderAfterInboxLoad(t *testing.T) {
+	backend := &pagedBackend{pages: [][]message{{
+		{ID: "1", From: "Alice", Subject: "First"},
+		{ID: "2", From: "Bob", Subject: "Second", Body: "Saved body", BodyLoaded: true},
+	}}}
+	m := NewWithOptions(Options{
+		backend: backend,
+		LastSession: LastSession{
+			Mailbox:      "INBOX",
+			MessageID:    "2",
+			ReaderOpen:   true,
+			ReaderOffset: 3,
+		},
+	})
+
+	first := inboxPageFromCmd(t, m.Init())
+	next, cmd := m.Update(first)
+	updated := next.(model)
+
+	if cmd != nil {
+		t.Fatal("expected cached restored reader to avoid extra command")
+	}
+	if updated.mode != readerView || updated.cursor != 1 || updated.readerOffset != 3 {
+		t.Fatalf("expected restored reader on message 2 at offset 3, mode=%v cursor=%d offset=%d", updated.mode, updated.cursor, updated.readerOffset)
+	}
+}
+
+func TestLastSessionLoadsOlderPagesUntilMessageIsFound(t *testing.T) {
+	backend := &pagedBackend{pages: [][]message{
+		{{ID: "1", From: "Alice", Subject: "First"}},
+		{{ID: "9", From: "Nora", Subject: "Saved"}},
+	}}
+	m := NewWithOptions(Options{
+		backend: backend,
+		LastSession: LastSession{
+			Mailbox:   "INBOX",
+			MessageID: "9",
+		},
+	})
+
+	first := inboxPageFromCmd(t, m.Init())
+	next, cmd := m.Update(first)
+	updated := next.(model)
+	if cmd == nil || !updated.loadingMore {
+		t.Fatal("expected restore to load older mail while looking for saved message")
+	}
+
+	second := inboxPageFromCmd(t, cmd)
+	next, cmd = updated.Update(second)
+	updated = next.(model)
+	if cmd != nil {
+		t.Fatal("expected restore to stop after finding saved message")
+	}
+	if updated.mode != inboxView || updated.cursor != 1 || updated.messages[updated.cursor].ID != "9" {
+		t.Fatalf("expected cursor on saved older message, cursor=%d messages=%+v", updated.cursor, updated.messages)
 	}
 }
 
@@ -1210,6 +1433,19 @@ func TestProviderDetectionGivesFriendlyGuidance(t *testing.T) {
 	}
 }
 
+func TestProtonProviderCanAutoConfigure(t *testing.T) {
+	provider := detectProvider("freddy@proton.me")
+	if !provider.canAutoConfigure() {
+		t.Fatalf("expected Proton to auto-configure via Bridge defaults, got %+v", provider)
+	}
+	if provider.IMAPHost != "127.0.0.1" || provider.IMAPPort != 1143 {
+		t.Fatalf("expected Proton Bridge IMAP 127.0.0.1:1143, got %s:%d", provider.IMAPHost, provider.IMAPPort)
+	}
+	if provider.SMTPHost != "127.0.0.1" || provider.SMTPPort != 1025 {
+		t.Fatalf("expected Proton Bridge SMTP 127.0.0.1:1025, got %s:%d", provider.SMTPHost, provider.SMTPPort)
+	}
+}
+
 func TestOpenURLRejectsNonWebSchemes(t *testing.T) {
 	for _, rawURL := range []string{"", "notaurl", "https://", "file:///tmp/secret", "javascript:alert(1)"} {
 		if err := openURL(rawURL); err == nil {
@@ -1518,6 +1754,38 @@ func (b *bodyBackend) ReadMessage(context.Context, message) (string, error) {
 
 func (b *bodyBackend) Label() string {
 	return "body fake"
+}
+
+type flagBackend struct {
+	bodyBackend
+	markedRead   []string
+	markedUnread []string
+	flaggedIDs   []string
+	unflaggedIDs []string
+}
+
+func (b *flagBackend) ReadMessage(_ context.Context, msg message) (string, error) {
+	b.reads++
+	return b.body, nil
+}
+
+func (b *flagBackend) MarkMessageRead(_ context.Context, msg message) error {
+	b.markedRead = append(b.markedRead, msg.ID)
+	return nil
+}
+
+func (b *flagBackend) MarkMessageUnread(_ context.Context, msg message) error {
+	b.markedUnread = append(b.markedUnread, msg.ID)
+	return nil
+}
+
+func (b *flagBackend) SetMessageFlagged(_ context.Context, msg message, flagged bool) error {
+	if flagged {
+		b.flaggedIDs = append(b.flaggedIDs, msg.ID)
+	} else {
+		b.unflaggedIDs = append(b.unflaggedIDs, msg.ID)
+	}
+	return nil
 }
 
 type configurableBackend struct {

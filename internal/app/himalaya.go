@@ -209,6 +209,21 @@ func (h himalayaBackend) DeleteMessage(ctx context.Context, msg message) error {
 	return h.runMessageAction(ctx, msg, h.deleteCandidates)
 }
 
+func (h himalayaBackend) MarkMessageRead(ctx context.Context, msg message) error {
+	return h.runMessageAction(ctx, msg, h.flagSeenCandidates)
+}
+
+func (h himalayaBackend) MarkMessageUnread(ctx context.Context, msg message) error {
+	return h.runMessageAction(ctx, msg, h.flagUnseenCandidates)
+}
+
+func (h himalayaBackend) SetMessageFlagged(ctx context.Context, msg message, flagged bool) error {
+	if flagged {
+		return h.runMessageAction(ctx, msg, h.flagFlaggedCandidates)
+	}
+	return h.runMessageAction(ctx, msg, h.flagUnflaggedCandidates)
+}
+
 func (h himalayaBackend) runMessageAction(ctx context.Context, msg message, candidates func(string) [][]string) error {
 	if h.runner == nil {
 		h.runner = osCommandRunner{}
@@ -284,6 +299,13 @@ func (h himalayaBackend) PrepareDraft(ctx context.Context, req draftRequest) (st
 			return fallback, nil
 		}
 		candidates = h.replyDraftCandidates(id)
+	case forwardDraft:
+		fallback = localForwardTemplate(req.Message, h.defaultFrom())
+		id := strings.TrimSpace(req.Message.ID)
+		if id == "" {
+			return fallback, nil
+		}
+		candidates = h.forwardDraftCandidates(id)
 	default:
 		fallback = localComposeTemplate(h.defaultFrom())
 		candidates = h.composeDraftCandidates()
@@ -383,6 +405,12 @@ func (h himalayaBackend) replyDraftCandidates(id string) [][]string {
 	return [][]string{v1}
 }
 
+func (h himalayaBackend) forwardDraftCandidates(id string) [][]string {
+	v1 := appendFlags([]string{"template", "forward"}, "--account", h.account, "--folder", h.mailbox)
+	v1 = append(v1, id)
+	return [][]string{v1}
+}
+
 func (h himalayaBackend) sendDraftCandidates() [][]string {
 	v1 := appendFlags([]string{"template", "send"}, "--account", h.account)
 
@@ -410,6 +438,38 @@ func (h himalayaBackend) deleteCandidates(id string) [][]string {
 
 	v2 := []string{"messages", "move", id}
 	v2 = appendFlags(v2, "--account", h.account, "--from", h.mailbox, "--to", h.trashFolder)
+
+	return [][]string{v1, v2}
+}
+
+func (h himalayaBackend) flagSeenCandidates(id string) [][]string {
+	v1 := appendFlags([]string{"flag", "add", id, "--flag", "seen"}, "--account", h.account, "--folder", h.mailbox)
+
+	v2 := appendFlags([]string{"flag", "add", "--flag", "seen", id}, "--account", h.account, "--mailbox", h.mailbox)
+
+	return [][]string{v1, v2}
+}
+
+func (h himalayaBackend) flagUnseenCandidates(id string) [][]string {
+	v1 := appendFlags([]string{"flag", "remove", id, "--flag", "seen"}, "--account", h.account, "--folder", h.mailbox)
+
+	v2 := appendFlags([]string{"flag", "remove", "--flag", "seen", id}, "--account", h.account, "--mailbox", h.mailbox)
+
+	return [][]string{v1, v2}
+}
+
+func (h himalayaBackend) flagFlaggedCandidates(id string) [][]string {
+	v1 := appendFlags([]string{"flag", "add", id, "--flag", "flagged"}, "--account", h.account, "--folder", h.mailbox)
+
+	v2 := appendFlags([]string{"flag", "add", "--flag", "flagged", id}, "--account", h.account, "--mailbox", h.mailbox)
+
+	return [][]string{v1, v2}
+}
+
+func (h himalayaBackend) flagUnflaggedCandidates(id string) [][]string {
+	v1 := appendFlags([]string{"flag", "remove", id, "--flag", "flagged"}, "--account", h.account, "--folder", h.mailbox)
+
+	v2 := appendFlags([]string{"flag", "remove", "--flag", "flagged", id}, "--account", h.account, "--mailbox", h.mailbox)
 
 	return [][]string{v1, v2}
 }
@@ -509,6 +569,7 @@ func messageFromEnvelope(envelope map[string]any, fallbackID string) message {
 		Date:    text(envelope, "date", "sent_at", "sentAt", "received_at", "receivedAt"),
 		Preview: preview,
 		Unread:  isUnread(flags),
+		Flagged: isFlagged(flags),
 	}
 }
 
@@ -744,6 +805,16 @@ func isUnread(flags []string) bool {
 		}
 	}
 	return len(flags) > 0
+}
+
+func isFlagged(flags []string) bool {
+	for _, flag := range flags {
+		switch strings.TrimLeft(strings.ToLower(flag), "\\") {
+		case "flagged", "\\flagged":
+			return true
+		}
+	}
+	return false
 }
 
 func text(obj map[string]any, keys ...string) string {

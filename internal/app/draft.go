@@ -14,6 +14,7 @@ type draftKind int
 const (
 	composeDraft draftKind = iota
 	replyDraft
+	forwardDraft
 )
 
 type draftRequest struct {
@@ -55,12 +56,18 @@ func (k draftKind) name() string {
 	if k == replyDraft {
 		return "reply"
 	}
+	if k == forwardDraft {
+		return "forward"
+	}
 	return "message"
 }
 
 func (k draftKind) title() string {
 	if k == replyDraft {
 		return "Reply"
+	}
+	if k == forwardDraft {
+		return "Forward"
 	}
 	return "Compose"
 }
@@ -370,6 +377,45 @@ func localReplyTemplate(msg message, from string) string {
 		for _, line := range strings.Split(normalizeDraftContent(quoted), "\n") {
 			lines = append(lines, "> "+line)
 		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func localForwardTemplate(msg message, from string) string {
+	subject := strings.TrimSpace(msg.Subject)
+	if subject == "" {
+		subject = "(no subject)"
+	}
+	if !strings.HasPrefix(strings.ToLower(subject), "fwd:") {
+		subject = "Fwd: " + subject
+	}
+
+	lines := []string{}
+	if strings.TrimSpace(from) != "" {
+		lines = append(lines, "From: "+safeHeaderValue(from))
+	}
+	lines = append(lines, "To: ", "Subject: "+safeHeaderValue(subject), "", "")
+
+	header := safeHeaderValue(firstNonEmpty(msg.From, msg.Email))
+	if strings.TrimSpace(header) != "" {
+		lines = append(lines, "--------- Forwarded message ---------")
+		lines = append(lines, "From: "+header)
+		if strings.TrimSpace(msg.Email) != "" && header != safeHeaderValue(msg.Email) {
+			lines = append(lines, "Email: "+safeHeaderValue(msg.Email))
+		}
+		if strings.TrimSpace(msg.Subject) != "" {
+			lines = append(lines, "Subject: "+safeHeaderValue(msg.Subject))
+		}
+		if strings.TrimSpace(msg.Date) != "" {
+			lines = append(lines, "Date: "+safeHeaderValue(msg.Date))
+		}
+		lines = append(lines, "")
+	}
+
+	forwarded := terminalSafeText(firstNonEmpty(msg.Body, msg.Preview))
+	if strings.TrimSpace(forwarded) != "" {
+		lines = append(lines, strings.Split(normalizeDraftContent(forwarded), "\n")...)
 	}
 
 	return strings.Join(lines, "\n")

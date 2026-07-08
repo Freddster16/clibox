@@ -151,16 +151,24 @@ func detectProvider(email string) providerInfo {
 		}
 	case "proton.me", "protonmail.com":
 		return providerInfo{
-			Name:          "Proton Mail",
-			Account:       "proton",
-			AuthSummary:   "Proton Mail usually needs Proton Mail Bridge before IMAP clients can connect.",
-			ManualWarning: "Set up Proton Mail Bridge first, then use the Bridge IMAP/SMTP details for the mail connection.",
-			HelpLabel:     "Open Proton Mail Bridge",
-			HelpURL:       "https://proton.me/mail/bridge",
+			Name:         "Proton Mail",
+			Account:      "proton",
+			AuthSummary:  "Proton Mail does not expose IMAP/SMTP directly. clibox fills in the default Proton Mail Bridge local servers; install and sign in to Bridge first.",
+			HelpLabel:    "Open Proton Mail Bridge",
+			HelpURL:      "https://proton.me/mail/bridge",
+			SecretLabel:  "Proton Mail Bridge password",
+			IMAPHost:     "127.0.0.1",
+			IMAPPort:     1143,
+			IMAPSecurity: "start-tls",
+			SMTPHost:     "127.0.0.1",
+			SMTPPort:     1025,
+			SMTPSecurity: "start-tls",
+			Folders:      standardFolders(),
 			Instructions: []string{
-				"Install and sign in to Proton Mail Bridge before continuing.",
-				"Use the local Bridge username and password, not your normal Proton password.",
-				"Choose custom/manual settings if autodiscovery does not find the Bridge.",
+				"Install and sign in to Proton Mail Bridge before continuing; it must be running for clibox to connect.",
+				"Use the local Bridge username and the Bridge-generated password, not your normal Proton password.",
+				"Bridge installs its local certificate during setup; if TLS verification fails, reinstall Bridge so its certificate is trusted.",
+				"These are the default Bridge ports. If you changed them in Bridge settings, edit your clibox config to match.",
 			},
 		}
 	default:

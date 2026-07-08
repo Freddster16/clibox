@@ -58,6 +58,12 @@ func renderReaderHeaderLine(style lipgloss.Style, width int, text string) string
 func (m model) renderMessageBodyLines(msg message, includePreview bool, width int) []string {
 	styles := m.activeTheme().styles
 	bodyLines := styledLines(wrapText(m.messageBodyText(msg, includePreview), width-2), styles.readerBody, width)
+	if !includePreview && strings.TrimSpace(msg.Notice) != "" {
+		if len(bodyLines) > 0 && strings.TrimSpace(bodyLines[len(bodyLines)-1]) != "" {
+			bodyLines = append(bodyLines, styles.readerBody.Width(width).Render(""))
+		}
+		bodyLines = append(bodyLines, styledLines(wrapText(msg.Notice, width-2), styles.unread, width)...)
+	}
 	if !includePreview && messageBodyReady(msg) && len(msg.Images) > 0 {
 		if len(bodyLines) > 0 && strings.TrimSpace(bodyLines[len(bodyLines)-1]) != "" {
 			bodyLines = append(bodyLines, styles.readerBody.Width(width).Render(""))

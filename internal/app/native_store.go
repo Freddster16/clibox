@@ -178,6 +178,11 @@ func (s *nativeStore) migrate(ctx context.Context) error {
 			PRIMARY KEY (account, mailbox),
 			FOREIGN KEY (account, mailbox) REFERENCES mailboxes(account, name) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS app_state (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 	}
 	for _, stmt := range statements {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -351,14 +356,18 @@ func (s *nativeStore) upsertEnvelopes(ctx context.Context, account, mailbox stri
 		if uid == "" {
 			continue
 		}
-		flags := ""
+		var flagList []string
 		unread := 0
 		if msg.Unread {
 			unread = 1
-			flags = "unread"
+			flagList = append(flagList, "unread")
 		}
+		if msg.Flagged {
+			flagList = append(flagList, "flagged")
+		}
+		flags := strings.Join(flagList, ",")
 		searchText := strings.ToLower(strings.Join([]string{msg.From, msg.Email, msg.Subject, msg.Preview, msg.Date}, " "))
-		if _, err := stmt.ExecContext(ctx, account, mailbox, uid, "", msg.From, msg.Email, msg.Subject, msg.Date, msg.Preview, flags, unread, searchText, 0, now); err != nil {
+		if _, err := stmt.ExecContext(ctx, account, mailbox, uid, msg.MessageID, msg.From, msg.Email, msg.Subject, msg.Date, msg.Preview, flags, unread, searchText, 0, now); err != nil {
 			return fmt.Errorf("could not save native envelope %s: %w", uid, err)
 		}
 	}
@@ -381,7 +390,7 @@ func (s *nativeStore) cachedEnvelopePage(ctx context.Context, account, mailbox s
 	}
 	args = append(args, pageSize+1, (page-1)*pageSize)
 
-	rows, err := s.db.QueryContext(ctx, `SELECT uid, sender_name, sender_email, subject, sent_at, preview, unread
+	rows, err := s.db.QueryContext(ctx, `SELECT uid, message_id, sender_name, sender_email, subject, sent_at, preview, unread, flags
 		FROM envelopes WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY CAST(uid AS INTEGER) DESC LIMIT ? OFFSET ?`, args...) // #nosec G202 -- WHERE fragments are fixed strings; user search terms are bound parameters.
 	if err != nil {
@@ -393,10 +402,12 @@ func (s *nativeStore) cachedEnvelopePage(ctx context.Context, account, mailbox s
 	for rows.Next() {
 		var msg message
 		var unread int
-		if err := rows.Scan(&msg.ID, &msg.From, &msg.Email, &msg.Subject, &msg.Date, &msg.Preview, &unread); err != nil {
+		var flags string
+		if err := rows.Scan(&msg.ID, &msg.MessageID, &msg.From, &msg.Email, &msg.Subject, &msg.Date, &msg.Preview, &unread, &flags); err != nil {
 			return nil, false, err
 		}
 		msg.Unread = unread != 0
+		msg.Flagged = strings.Contains(flags, "flagged")
 		messages = append(messages, msg)
 	}
 	if err := rows.Err(); err != nil {
@@ -434,6 +445,31 @@ func (s *nativeStore) body(ctx context.Context, account, mailbox, uid string) (s
 		return "", false, fmt.Errorf("could not read cached native message body: %w", err)
 	}
 	return body, true, nil
+}
+
+func (s *nativeStore) saveAppState(ctx context.Context, key string, value []byte) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO app_state (key, value, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET
+			value = excluded.value,
+			updated_at = excluded.updated_at`, key, string(value), now)
+	if err != nil {
+		return fmt.Errorf("could not save clibox app state: %w", err)
+	}
+	return nil
+}
+
+func (s *nativeStore) appState(ctx context.Context, key string) ([]byte, bool, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM app_state WHERE key = ?`, key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("could not read clibox app state: %w", err)
+	}
+	return []byte(value), true, nil
 }
 
 func (s *nativeStore) schemaHasCredentialColumns(ctx context.Context) (bool, []string, error) {

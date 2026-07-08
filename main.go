@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -22,8 +23,9 @@ func main() {
 	mailBackend := flags.String("mail-backend", "", "advanced: mail backend mode: himalaya or native")
 	editor := flags.String("editor", "", "editor command for compose and reply drafts")
 	himalaya := flags.String("himalaya", "", "deprecated alias for --backend")
-	pageSize := flags.Int("page-size", 0, "advanced: envelopes to request per page; 0 loads all pages with backend defaults")
+	pageSize := flags.Int("page-size", 0, "advanced: envelopes to request per page; 0 uses the backend default (50)")
 	confirmDelete := flags.Bool("confirm-delete", true, "ask before moving messages to Trash")
+	composeFormat := flags.String("compose-format", "", "compose body format: text or markdown")
 	showThemes := flags.Bool("themes", false, "list available themes")
 	email := flags.String("email", "", "email address for auth add")
 	verbose := flags.Bool("verbose", false, "show detailed doctor output")
@@ -46,7 +48,7 @@ func main() {
 		fmt.Fprintln(flags.Output(), "  -mail-backend string")
 		fmt.Fprintln(flags.Output(), "    \tadvanced: mail backend mode: himalaya or native")
 		fmt.Fprintln(flags.Output(), "  -page-size int")
-		fmt.Fprintln(flags.Output(), "    \tadvanced: envelopes to request per page; 0 loads all pages with backend defaults")
+		fmt.Fprintln(flags.Output(), "    \tadvanced: envelopes to request per page; 0 uses the backend default (50)")
 		fmt.Fprintln(flags.Output(), "  -theme string")
 		fmt.Fprintln(flags.Output(), "    \tstart clibox with a theme: nocturne, ember, or lagoon")
 		fmt.Fprintln(flags.Output(), "  -themes")
@@ -109,6 +111,7 @@ func main() {
 		Editor:        config.Editor,
 		PageSize:      config.PageSize,
 		ConfirmDelete: config.ConfirmDelete,
+		ComposeFormat: config.ComposeFormat,
 		ConfigPath:    *configPath,
 		Accounts:      config.Accounts,
 		Verbose:       *verbose,
@@ -140,6 +143,23 @@ func main() {
 	if visited["confirm-delete"] {
 		value := *confirmDelete
 		options.ConfirmDelete = &value
+	}
+	if visited["compose-format"] {
+		options.ComposeFormat = *composeFormat
+	}
+	if command == "" {
+		options.RememberSession = true
+		if !visited["account"] && !visited["mailbox"] {
+			if lastSession, ok, err := app.LoadLastSession(options.StatePath); err == nil && ok {
+				options.LastSession = lastSession
+				if strings.TrimSpace(lastSession.Account) != "" {
+					options.Account = lastSession.Account
+				}
+				if strings.TrimSpace(lastSession.Mailbox) != "" {
+					options.Mailbox = lastSession.Mailbox
+				}
+			}
+		}
 	}
 
 	switch command {

@@ -70,6 +70,31 @@ func TestNativeStoreCachesAccountEnvelopesAndBodiesWithoutCredentialColumns(t *t
 	}
 }
 
+func TestNativeStoreSavesLastSession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "clibox.db")
+	err := saveLastSession(path, LastSession{
+		Account:       "gmail",
+		Mailbox:       "Sent",
+		MailboxFilter: "unread",
+		SearchQuery:   "deploy",
+		MessageID:     "42",
+		ReaderOpen:    true,
+		ReaderOffset:  7,
+	})
+	if err != nil {
+		t.Fatalf("expected last session save: %v", err)
+	}
+
+	session, ok, err := LoadLastSession(path)
+	if err != nil || !ok {
+		t.Fatalf("expected last session load ok=%v err=%v", ok, err)
+	}
+	if session.Account != "gmail" || session.Mailbox != "Sent" || session.MailboxFilter != "unread" ||
+		session.SearchQuery != "deploy" || session.MessageID != "42" || !session.ReaderOpen || session.ReaderOffset != 7 {
+		t.Fatalf("unexpected last session: %+v", session)
+	}
+}
+
 func TestNativeStoreDatabaseFileIsPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "clibox.db")
 	store, err := openNativeStore(path)

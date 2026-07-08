@@ -10,7 +10,7 @@ import (
 func (m model) updateSearchPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.quitWithSession()
 	case "esc":
 		m.searching = false
 		return m.withStatus("search canceled"), nil
@@ -49,7 +49,7 @@ func (m model) updateSearchPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) updateDeleteConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.quitWithSession()
 	case "y", "Y", "enter":
 		m.confirmDelete = false
 		return m.startMessageAction(deleteAction)

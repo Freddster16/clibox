@@ -10,9 +10,15 @@ func (m model) renderDraftReview(height int) string {
 	lines := []string{
 		styles.panelTitle.Render(m.draft.Kind.title()),
 		"",
-		styles.readerHeader.Width(width).Render("From: " + terminalSafeLine(firstNonEmpty(summary.From, "(backend default)"))),
-		m.renderDraftField(width, draftFieldTo, "To", summary.To),
 	}
+	if strings.EqualFold(m.composeFormat, "markdown") {
+		lines = append(lines, styles.themeBadge.Width(width).Render("Markdown mode: body will be sent as text + HTML"))
+		lines = append(lines, "")
+	}
+	lines = append(lines,
+		styles.readerHeader.Width(width).Render("From: "+terminalSafeLine(firstNonEmpty(summary.From, "(backend default)"))),
+		m.renderDraftField(width, draftFieldTo, "To", summary.To),
+	)
 	if strings.TrimSpace(summary.Cc) != "" {
 		lines = append(lines, styles.readerHeader.Width(width).Render("Cc: "+terminalSafeLine(summary.Cc)))
 	}

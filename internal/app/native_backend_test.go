@@ -39,6 +39,58 @@ func TestNativeEnvelopeSeqRangeUsesRemoteTotalForDone(t *testing.T) {
 	}
 }
 
+func TestHtmlToTextPreservesParagraphBreaks(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "br and paragraphs",
+			input: `<p>Hello</p><p>World</p>`,
+			want:  "Hello\n\nWorld",
+		},
+		{
+			name:  "br tag",
+			input: `line one<br>line two<br/>line three`,
+			want:  "line one\nline two\nline three",
+		},
+		{
+			name:  "inline whitespace collapsed, newlines kept",
+			input: "<p>foo   bar\tbaz</p><p>second</p>",
+			want:  "foo bar baz\n\nsecond",
+		},
+		{
+			name:  "list items on separate lines",
+			input: `<ul><li>one</li><li>two</li></ul>`,
+			want:  "one\ntwo",
+		},
+		{
+			name:  "script and style stripped",
+			input: `<style>body{color:red}</style><script>alert(1)</script><p>visible</p>`,
+			want:  "visible",
+		},
+		{
+			name:  "entities unescaped",
+			input: `<p>tom &amp; jerry &lt;3</p>`,
+			want:  "tom & jerry <3",
+		},
+		{
+			name:  "headings break",
+			input: `<h1>Title</h1><p>Body</p>`,
+			want:  "Title\n\nBody",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := htmlToText(tc.input)
+			if got != tc.want {
+				t.Fatalf("htmlToText(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestExtractReadableMessageContentIncludesImages(t *testing.T) {
 	raw := strings.Join([]string{
 		"MIME-Version: 1.0",
@@ -68,5 +120,42 @@ func TestExtractReadableMessageContentIncludesImages(t *testing.T) {
 	image := content.Images[0]
 	if image.Name != "pixel.png" || image.ContentType != "image/png" || string(image.Data) != "hello" {
 		t.Fatalf("unexpected image: %+v", image)
+	}
+	if content.Notice != "" {
+		t.Fatalf("expected no notice for a single small image, got %q", content.Notice)
+	}
+}
+
+func TestExtractReadableMessageContentNoticesDroppedImages(t *testing.T) {
+	raw := strings.Join([]string{
+		"MIME-Version: 1.0",
+		`Content-Type: multipart/mixed; boundary="clibox-test"`,
+		"",
+		"--clibox-test",
+		"Content-Type: text/plain; charset=utf-8",
+		"",
+		"Two images attached.",
+		"--clibox-test",
+		"Content-Type: image/png",
+		`Content-Disposition: inline; filename="first.png"`,
+		"Content-Transfer-Encoding: base64",
+		"",
+		"aGVsbG8=",
+		"--clibox-test",
+		"Content-Type: image/png",
+		`Content-Disposition: inline; filename="second.png"`,
+		"Content-Transfer-Encoding: base64",
+		"",
+		"d29ybGQ=",
+		"--clibox-test--",
+		"",
+	}, "\r\n")
+
+	content := extractReadableMessageContent([]byte(raw))
+	if len(content.Images) != 1 {
+		t.Fatalf("expected one kept image, got %d", len(content.Images))
+	}
+	if content.Notice == "" || !strings.Contains(content.Notice, "1 inline image") {
+		t.Fatalf("expected dropped-image notice, got %q", content.Notice)
 	}
 }

@@ -22,20 +22,23 @@ const (
 )
 
 type Options struct {
-	Theme         string
-	Account       string
-	Mailbox       string
-	ArchiveFolder string
-	BackendMode   string
-	Himalaya      string
-	Editor        string
-	PageSize      int
-	ConfirmDelete *bool
-	ConfigPath    string
-	StatePath     string
-	Accounts      map[string]AccountConfig
-	Verbose       bool
-	backend       inboxBackend
+	Theme           string
+	Account         string
+	Mailbox         string
+	ArchiveFolder   string
+	BackendMode     string
+	Himalaya        string
+	Editor          string
+	PageSize        int
+	ConfirmDelete   *bool
+	ComposeFormat   string
+	ConfigPath      string
+	StatePath       string
+	RememberSession bool
+	LastSession     LastSession
+	Accounts        map[string]AccountConfig
+	Verbose         bool
+	backend         inboxBackend
 }
 
 type inboxLoadedMsg struct {
@@ -55,6 +58,7 @@ type messageBodyLoadedMsg struct {
 	id     string
 	body   string
 	images []messageImage
+	notice string
 	serial int
 	err    error
 }
@@ -93,6 +97,15 @@ type draftSentMsg struct {
 type messageActionDoneMsg struct {
 	action messageActionState
 	err    error
+}
+
+type messageMarkedReadMsg struct {
+	err error
+}
+
+type messageFlagToggledMsg struct {
+	flagged bool
+	err     error
 }
 
 type mailboxViewFilter int
@@ -150,6 +163,10 @@ type model struct {
 	actionSerial      int
 	deletePrompt      bool
 	editor            string
+	composeFormat     string
+	statePath         string
+	rememberSession   bool
+	restoreSession    LastSession
 	width             int
 	height            int
 }
@@ -172,6 +189,14 @@ func NewWithOptions(options Options) model {
 	status := fmt.Sprintf("theme %s active; press t to choose", appThemes[index].name)
 	if strings.TrimSpace(selected) != "" && !ok {
 		status = fmt.Sprintf("unknown theme %q; using %s", selected, appThemes[index].name)
+	}
+
+	lastSession := options.LastSession.normalized()
+	if strings.TrimSpace(lastSession.Account) != "" {
+		options.Account = lastSession.Account
+	}
+	if strings.TrimSpace(lastSession.Mailbox) != "" {
+		options.Mailbox = lastSession.Mailbox
 	}
 
 	backend := options.backend
@@ -210,6 +235,15 @@ func NewWithOptions(options Options) model {
 		themeBeforePicker: index,
 		deletePrompt:      deletePrompt,
 		editor:            strings.TrimSpace(options.Editor),
+		composeFormat:     strings.ToLower(strings.TrimSpace(options.ComposeFormat)),
+		statePath:         strings.TrimSpace(options.StatePath),
+		rememberSession:   options.RememberSession,
+		restoreSession:    lastSession,
+	}
+	m.mailboxFilter = sessionMailboxFilter(lastSession.MailboxFilter)
+	if strings.TrimSpace(lastSession.SearchQuery) != "" {
+		m.searchQuery = lastSession.SearchQuery
+		m.searchInput = lastSession.SearchQuery
 	}
 	m.mailboxCursor = m.activeMailboxEntryIndex()
 	return m
@@ -368,7 +402,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.action.Kind == archiveAction || m.mode == readerView {
 			m.mode = inboxView
 		}
-		return m.withStatus(msg.action.Kind.pastTense() + " " + selectedMessageLabel(msg.action.Message)), nil
+		m = m.withStatus(msg.action.Kind.pastTense() + " " + selectedMessageLabel(msg.action.Message))
+		return m.withSessionSave(nil)
+	case messageMarkedReadMsg:
+		if msg.err != nil {
+			return m.withStatus("could not mark email read on server: " + oneLine(msg.err.Error())), nil
+		}
+		return m, nil
+	case messageFlagToggledMsg:
+		if msg.err != nil {
+			action := "flag"
+			if !msg.flagged {
+				action = "unflag"
+			}
+			return m.withStatus("could not " + action + " email: " + oneLine(msg.err.Error())), nil
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -383,7 +432,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showThemes {
 			switch key {
 			case "ctrl+c":
-				return m, tea.Quit
+				return m.quitWithSession()
 			case "up", "k":
 				return m.previewTheme(m.themeCursor - 1), nil
 			case "down", "j":
@@ -437,12 +486,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch key {
 		case "ctrl+c":
-			return m, tea.Quit
+			return m.quitWithSession()
 		case "q":
 			if m.mode == readerView {
-				return m.closeReader(), nil
+				m = m.closeReader()
+				return m.withSessionSave(nil)
 			}
-			return m, tea.Quit
+			return m.quitWithSession()
 		case "?":
 			m.showHelp = true
 		case "tab", "left":
@@ -455,19 +505,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == readerView {
 				m.readerOffset = max(0, m.readerOffset-1)
 				m.status = ""
+				return m.withSessionSave(nil)
 			} else if m.mode == inboxView && m.cursor > 0 {
 				m.cursor--
 				m.status = ""
-				return m.previewSelectedMessage()
+				m, cmd := m.previewSelectedMessage()
+				return m.withSessionSave(cmd)
 			}
 		case "down", "j":
 			if m.mode == readerView {
 				m.readerOffset = min(m.maxReaderOffset(), m.readerOffset+1)
 				m.status = ""
+				return m.withSessionSave(nil)
 			} else if m.mode == inboxView && m.cursor < len(m.messages)-1 {
 				m.cursor++
 				m.status = ""
-				return m.previewSelectedMessage()
+				m, cmd := m.previewSelectedMessage()
+				return m.withSessionSave(cmd)
 			} else if m.mode == inboxView && len(m.messages) > 0 {
 				return m.loadOlderMail()
 			}
@@ -475,21 +529,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == readerView {
 				m.readerOffset = max(0, m.readerOffset-m.readerPageSize())
 				m.status = ""
+				return m.withSessionSave(nil)
 			}
 		case "pgdown":
 			if m.mode == readerView {
 				m.readerOffset = min(m.maxReaderOffset(), m.readerOffset+m.readerPageSize())
 				m.status = ""
+				return m.withSessionSave(nil)
 			}
 		case "home":
 			if m.mode == readerView {
 				m.readerOffset = 0
 				m.status = ""
+				return m.withSessionSave(nil)
 			}
 		case "end":
 			if m.mode == readerView {
 				m.readerOffset = m.maxReaderOffset()
 				m.status = ""
+				return m.withSessionSave(nil)
 			}
 		case "enter":
 			if m.mode == inboxView && len(m.messages) > 0 {
@@ -497,7 +555,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "b", "esc":
 			if m.mode == readerView {
-				return m.closeReader(), nil
+				m = m.closeReader()
+				return m.withSessionSave(nil)
 			} else if m.mode == inboxView && strings.TrimSpace(m.searchQuery) != "" {
 				return m.clearSearch()
 			} else if m.mode == inboxView && m.mailboxFilter == unreadMailFilter {
@@ -507,12 +566,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == readerView {
 				return m.startDraft(replyDraft)
 			}
+		case "f":
+			if m.mode == readerView {
+				return m.startDraft(forwardDraft)
+			}
 		case "c":
 			return m.startDraft(composeDraft)
 		case "a":
 			return m.startMessageAction(archiveAction)
 		case "d":
 			return m.askDeleteConfirmation()
+		case "m":
+			return m.toggleRead()
+		case "s":
+			return m.toggleFlagged()
 		case "/":
 			m.mode = inboxView
 			m.searching = true
@@ -539,7 +606,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) updateMailboxRail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
-		return m, tea.Quit
+		return m.quitWithSession()
 	case "?":
 		m.showHelp = true
 	case "right", "esc", "b":
@@ -621,12 +688,12 @@ func (m model) startDraft(kind draftKind) (model, tea.Cmd) {
 	}
 
 	request := draftRequest{Kind: kind}
-	if kind == replyDraft {
+	if kind == replyDraft || kind == forwardDraft {
 		if m.mode != readerView || len(m.messages) == 0 {
-			return m.withStatus("open an email before replying"), nil
+			return m.withStatus("open an email before " + kind.name() + "ing"), nil
 		}
 		request.Message = m.selectedMessage()
-		if strings.TrimSpace(request.Message.Email) == "" {
+		if kind == replyDraft && strings.TrimSpace(request.Message.Email) == "" {
 			return m.withStatus("selected email has no reply address"), nil
 		}
 	}
@@ -676,7 +743,7 @@ func (m model) updateDraftReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.draft.Sending {
 		if key == "ctrl+c" {
 			m.cleanupDraft()
-			return m, tea.Quit
+			return m.quitWithSession()
 		}
 		return m, nil
 	}
@@ -684,7 +751,7 @@ func (m model) updateDraftReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "ctrl+c":
 		m.cleanupDraft()
-		return m, tea.Quit
+		return m.quitWithSession()
 	case "esc":
 		nextMode := m.draftReturnMode()
 		m.cleanupDraft()
@@ -824,7 +891,7 @@ func (m *model) cleanupDraft() {
 }
 
 func (m model) draftReturnMode() viewMode {
-	if m.draft.Kind == replyDraft && len(m.messages) > 0 {
+	if (m.draft.Kind == replyDraft || m.draft.Kind == forwardDraft) && len(m.messages) > 0 {
 		return readerView
 	}
 	return inboxView

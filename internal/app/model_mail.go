@@ -110,16 +110,23 @@ func messageDedupeKey(msg message) string {
 }
 
 func indexMessageByID(messages []message, id string) int {
+	if index, ok := findMessageIndexByID(messages, id); ok {
+		return index
+	}
+	return 0
+}
+
+func findMessageIndexByID(messages []message, id string) (int, bool) {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return 0
+		return 0, false
 	}
 	for i, msg := range messages {
 		if strings.TrimSpace(msg.ID) == id {
-			return i
+			return i, true
 		}
 	}
-	return 0
+	return 0, false
 }
 
 func (m model) previewSelectedMessage() (model, tea.Cmd) {
@@ -143,32 +150,98 @@ func (m model) previewSelectedMessage() (model, tea.Cmd) {
 }
 
 func (m model) openSelectedMessage() (model, tea.Cmd) {
+	return m.openSelectedMessageAtOffset(0)
+}
+
+func (m model) openSelectedMessageAtOffset(offset int) (model, tea.Cmd) {
 	if len(m.messages) == 0 {
 		return m.withStatus("No email selected"), nil
 	}
 
 	index := min(m.cursor, len(m.messages)-1)
 	m.mode = readerView
-	m.readerOffset = 0
+	m.readerOffset = max(0, offset)
+	wasUnread := m.messages[index].Unread
 	m.messages[index].Unread = false
 	msg := m.messages[index]
+	markRead := m.markReadCmd(msg, wasUnread)
 	if messageBodyReady(msg) {
-		return m.withStatus(""), nil
+		return m.withStatus("").withSessionSave(markRead)
 	}
 	if m.loadingMessageID == msg.ID {
-		return m.withStatus("Loading email..."), nil
+		return m.withStatus("Loading email...").withSessionSave(markRead)
 	}
 
 	backend, ok := m.backend.(messageBodyBackend)
 	if !ok {
 		m.messages[index].BodyError = "This backend cannot load full emails yet."
-		return m.withStatus("email body is not available yet"), nil
+		return m.withStatus("email body is not available yet").withSessionSave(markRead)
 	}
 
 	m.messageLoadSerial++
 	m.loadingMessageID = msg.ID
 	m.messages[index].BodyError = ""
-	return m.withStatus("Loading email..."), m.loadMessageBody(backend, msg, m.messageLoadSerial)
+	loadCmd := m.loadMessageBody(backend, msg, m.messageLoadSerial)
+	if markRead == nil {
+		return m.withStatus("Loading email...").withSessionSave(loadCmd)
+	}
+	return m.withStatus("Loading email...").withSessionSave(tea.Batch(loadCmd, markRead))
+}
+
+func (m model) markReadCmd(msg message, wasUnread bool) tea.Cmd {
+	if !wasUnread {
+		return nil
+	}
+	backend, ok := m.backend.(messageFlagBackend)
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		return messageMarkedReadMsg{err: backend.MarkMessageRead(context.Background(), msg)}
+	}
+}
+
+func (m model) toggleRead() (model, tea.Cmd) {
+	if len(m.messages) == 0 {
+		return m.withStatus("No email selected"), nil
+	}
+	backend, ok := m.backend.(messageFlagBackend)
+	if !ok {
+		return m.withStatus("this backend cannot toggle read state yet"), nil
+	}
+	index := min(m.cursor, len(m.messages)-1)
+	msg := m.messages[index]
+	m.messages[index].Unread = !msg.Unread
+	wantUnread := m.messages[index].Unread
+	var cmd tea.Cmd
+	if wantUnread {
+		cmd = func() tea.Msg {
+			return messageMarkedReadMsg{err: backend.MarkMessageUnread(context.Background(), msg)}
+		}
+	} else {
+		cmd = func() tea.Msg {
+			return messageMarkedReadMsg{err: backend.MarkMessageRead(context.Background(), msg)}
+		}
+	}
+	return m.withStatus(""), cmd
+}
+
+func (m model) toggleFlagged() (model, tea.Cmd) {
+	if len(m.messages) == 0 {
+		return m.withStatus("No email selected"), nil
+	}
+	backend, ok := m.backend.(messageFlagBackend)
+	if !ok {
+		return m.withStatus("this backend cannot toggle flags yet"), nil
+	}
+	index := min(m.cursor, len(m.messages)-1)
+	msg := m.messages[index]
+	m.messages[index].Flagged = !msg.Flagged
+	flagged := m.messages[index].Flagged
+	cmd := func() tea.Msg {
+		return messageFlagToggledMsg{flagged: flagged, err: backend.SetMessageFlagged(context.Background(), msg, flagged)}
+	}
+	return m.withStatus(""), cmd
 }
 
 func (m model) closeReader() model {
@@ -188,7 +261,7 @@ func (m model) loadMessageBody(backend messageBodyBackend, msg message, serial i
 	return func() tea.Msg {
 		if contentBackend, ok := backend.(messageContentBackend); ok {
 			content, err := contentBackend.ReadMessageContent(context.Background(), msg)
-			return messageBodyLoadedMsg{id: msg.ID, body: content.Body, images: content.Images, serial: serial, err: err}
+			return messageBodyLoadedMsg{id: msg.ID, body: content.Body, images: content.Images, notice: content.Notice, serial: serial, err: err}
 		}
 		body, err := backend.ReadMessage(context.Background(), msg)
 		return messageBodyLoadedMsg{id: msg.ID, body: body, serial: serial, err: err}
@@ -211,6 +284,7 @@ func (m model) setMessageContent(id string, content messageContent) model {
 		if m.messages[i].ID == id {
 			m.messages[i].Body = content.Body
 			m.messages[i].Images = content.Images
+			m.messages[i].Notice = content.Notice
 			m.messages[i].BodyLoaded = true
 			m.messages[i].BodyError = ""
 			break

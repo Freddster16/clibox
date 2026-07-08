@@ -78,3 +78,61 @@ func TestDraftTempFileUsesOwnerOnlyPermissions(t *testing.T) {
 		t.Fatalf("expected draft file permissions 0600, got %#o", got)
 	}
 }
+
+func TestLocalForwardTemplateSanitizesHeaders(t *testing.T) {
+	template := localForwardTemplate(message{
+		From:    "Alice\nBcc: attacker@example.com",
+		Email:   "alice@example.com\nInjected: bad",
+		Subject: "Hello\nX-Header: yes",
+		Body:    "Original body",
+	}, "Freddy\nBad: value <freddy@example.com>")
+
+	for _, line := range strings.Split(template, "\n") {
+		if strings.HasPrefix(line, "Bcc: attacker") || strings.HasPrefix(line, "Injected:") || strings.HasPrefix(line, "X-Header:") || strings.HasPrefix(line, "Bad:") {
+			t.Fatalf("expected forward template to sanitize injected headers, got:\n%s", template)
+		}
+	}
+	if !strings.Contains(template, "Subject: Fwd: Hello X-Header: yes") {
+		t.Fatalf("expected sanitized Fwd: subject, got:\n%s", template)
+	}
+	if !strings.Contains(template, "--------- Forwarded message ---------") {
+		t.Fatalf("expected forwarded message header marker, got:\n%s", template)
+	}
+	if !strings.Contains(template, "Original body") {
+		t.Fatalf("expected original body in forward, got:\n%s", template)
+	}
+}
+
+func TestLocalForwardTemplateSanitizesBodyControls(t *testing.T) {
+	template := localForwardTemplate(message{
+		From:    "Alice",
+		Email:   "alice@example.com",
+		Subject: "Hello",
+		Body:    "Hello\x1b]52;c;SGVsbG8=\a red\x1b[31m text",
+	}, "Freddy <freddy@example.com>")
+
+	for _, unsafe := range []string{"\x1b", "\a", "]52", "[31m"} {
+		if strings.Contains(template, unsafe) {
+			t.Fatalf("forward template leaked terminal control payload %q in:\n%s", unsafe, template)
+		}
+	}
+	if !strings.Contains(template, "Hello red text") {
+		t.Fatalf("expected sanitized forwarded body, got:\n%s", template)
+	}
+}
+
+func TestLocalForwardTemplatePrependsFwd(t *testing.T) {
+	template := localForwardTemplate(message{
+		From:    "Alice",
+		Email:   "alice@example.com",
+		Subject: "Fwd: Already forwarded",
+		Body:    "Body",
+	}, "Freddy <freddy@example.com>")
+
+	if strings.Contains(template, "Fwd: Fwd:") {
+		t.Fatalf("expected no double Fwd: prefix, got:\n%s", template)
+	}
+	if !strings.Contains(template, "Subject: Fwd: Already forwarded") {
+		t.Fatalf("expected single Fwd: prefix, got:\n%s", template)
+	}
+}

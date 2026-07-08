@@ -120,14 +120,19 @@ func (m model) renderRows(width, height int) []string {
 		if msg.Unread {
 			unread = "*"
 		}
+		flagged := " "
+		if msg.Flagged {
+			flagged = "\u2605"
+		}
 
 		fromWidth := 12
 		dateWidth := 10
-		subjectWidth := max(8, width-fromWidth-dateWidth-8)
+		subjectWidth := max(8, width-fromWidth-dateWidth-10)
 		line := fmt.Sprintf(
-			"%s %s %-*s %-*s %*s",
+			"%s %s %s %-*s %-*s %*s",
 			prefix,
 			unread,
+			flagged,
 			fromWidth,
 			truncate(msg.From, fromWidth),
 			subjectWidth,

@@ -6,6 +6,81 @@ bin_name="clibox"
 min_go_minor="25"
 min_go_patch="11"
 
+expand_user_path() {
+  case "$1" in
+    "~")
+      printf '%s\n' "$HOME"
+      ;;
+    "~/"*)
+      printf '%s/%s\n' "$HOME" "${1#~/}"
+      ;;
+    *)
+      printf '%s\n' "$1"
+      ;;
+  esac
+}
+
+path_has_dir() {
+  case ":${PATH:-}:" in
+    *":$1:"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+shell_profile_path() {
+  shell_name="${SHELL##*/}"
+  case "$shell_name" in
+    zsh)
+      printf '%s\n' "$HOME/.zshrc"
+      ;;
+    bash)
+      printf '%s\n' "$HOME/.bashrc"
+      ;;
+    *)
+      printf '%s\n' "$HOME/.profile"
+      ;;
+  esac
+}
+
+ensure_install_dir_on_path() {
+  install_dir="$1"
+  if path_has_dir "$install_dir"; then
+    return 0
+  fi
+  if [ "${CLIBOX_NO_PATH_UPDATE:-}" = "1" ]; then
+    return 1
+  fi
+
+  profile="$(shell_profile_path)"
+  line="export PATH=\"$install_dir:\$PATH\""
+  if [ -f "$profile" ] && grep -F "$line" "$profile" >/dev/null 2>&1; then
+    return 2
+  fi
+  {
+    echo
+    echo "# clibox"
+    echo "$line"
+  } >>"$profile" || return 1
+  return 2
+}
+
+choose_install_dir() {
+  if [ -n "${CLIBOX_INSTALL_DIR:-}" ]; then
+    expand_user_path "$CLIBOX_INSTALL_DIR"
+    return 0
+  fi
+
+  gopath_bin="$(go env GOPATH 2>/dev/null)/bin"
+  for dir in "$HOME/.local/bin" "$HOME/bin" "$gopath_bin" /opt/homebrew/bin /usr/local/bin; do
+    if [ -n "$dir" ] && [ -d "$dir" ] && [ -w "$dir" ] && path_has_dir "$dir"; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "$HOME/.local/bin"
+}
+
 load_homebrew_path() {
   if command -v brew >/dev/null 2>&1; then
     return 0
@@ -124,29 +199,45 @@ else
 fi
 install_go
 
-echo "Installing ${bin_name} from ${repo} main..."
-go install "${repo}@main"
+install_dir="$(choose_install_dir)"
+mkdir -p "$install_dir"
+install_dir="$(cd "$install_dir" && pwd -P)"
 
-gobin="$(go env GOBIN)"
-if [ -z "$gobin" ]; then
-  gobin="$(go env GOPATH)/bin"
-fi
+echo "Installing ${bin_name} from ${repo} main..."
+GOBIN="$install_dir" go install "${repo}@main"
 
 echo
-echo "Installed ${bin_name} to ${gobin}/${bin_name}"
+echo "Installed ${bin_name} to ${install_dir}/${bin_name}"
 if [ "${CLIBOX_SKIP_HIMALAYA:-}" = "1" ]; then
   echo "Native backend is built in. Himalaya compatibility backend was skipped."
 else
   echo "Himalaya compatibility backend is available. Native backend is built in."
 fi
-echo "Run it with:"
-echo "  ${bin_name}"
+if path_has_dir "$install_dir"; then
+  echo "Run it from any directory with:"
+  echo "  ${bin_name}"
+else
+  if [ "${CLIBOX_NO_PATH_UPDATE:-}" = "1" ]; then
+    echo "${install_dir} is not on your shell PATH."
+  else
+    if ensure_install_dir_on_path "$install_dir"; then
+      path_status=0
+    else
+      path_status=$?
+    fi
+    if [ "$path_status" = "2" ]; then
+      echo "Configured ${install_dir} on your shell PATH for future terminals."
+    else
+      echo "${install_dir} is not on your shell PATH, and the installer could not update it automatically."
+    fi
+  fi
+  echo "Use it now with:"
+  echo "  export PATH=\"${install_dir}:\$PATH\""
+  echo "  ${bin_name}"
+fi
 echo "Check your email setup with:"
 echo "  ${bin_name} doctor"
 echo "Native account commands:"
 echo "  ${bin_name} auth add --email you@gmail.com --account gmail"
 echo "  ${bin_name} auth login --account gmail"
 echo "  ${bin_name} --mail-backend native --account gmail"
-echo
-echo "If your shell cannot find it, add this to PATH:"
-echo "  export PATH=\"${gobin}:\$PATH\""

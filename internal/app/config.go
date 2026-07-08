@@ -19,6 +19,7 @@ type Config struct {
 	Editor        string
 	PageSize      int
 	ConfirmDelete *bool
+	ComposeFormat string
 	Accounts      map[string]AccountConfig
 }
 
@@ -189,6 +190,16 @@ func parseConfig(content string) (Config, error) {
 				return Config{}, fmt.Errorf("line %d: confirm_delete must be true or false", lineNo)
 			}
 			config.ConfirmDelete = &value
+		case "compose_format":
+			value, err := parseConfigString(raw)
+			if err != nil {
+				return Config{}, fmt.Errorf("line %d: %w", lineNo, err)
+			}
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value != "" && value != "text" && value != "markdown" {
+				return Config{}, fmt.Errorf("line %d: compose_format must be text or markdown", lineNo)
+			}
+			config.ComposeFormat = value
 		default:
 			return Config{}, fmt.Errorf("line %d: unknown config key %q", lineNo, key)
 		}

@@ -2,6 +2,7 @@ package app
 
 type message struct {
 	ID         string
+	MessageID  string
 	From       string
 	Email      string
 	Subject    string
@@ -12,6 +13,8 @@ type message struct {
 	BodyLoaded bool
 	BodyError  string
 	Unread     bool
+	Flagged    bool
+	Notice     string
 }
 
 type messageImage struct {
@@ -23,4 +26,5 @@ type messageImage struct {
 type messageContent struct {
 	Body   string
 	Images []messageImage
+	Notice string
 }

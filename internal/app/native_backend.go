@@ -24,6 +24,7 @@ type nativeBackend struct {
 	pageSize       int
 	statePath      string
 	editor         string
+	composeFormat  string
 	configAccounts map[string]AccountConfig
 }
 
@@ -35,6 +36,7 @@ func newNativeBackend(options Options) nativeBackend {
 		pageSize:       options.PageSize,
 		statePath:      options.StatePath,
 		editor:         strings.TrimSpace(options.Editor),
+		composeFormat:  strings.ToLower(strings.TrimSpace(options.ComposeFormat)),
 		configAccounts: options.Accounts,
 	}
 }
@@ -310,14 +312,19 @@ func (n nativeBackend) ReadMessageContent(ctx context.Context, msg message) (mes
 		done <- client.UidFetch(seqset, []imap.FetchItem{section.FetchItem()}, messages)
 	}()
 	var raw []byte
+	truncated := false
 	for fetched := range messages {
 		literal := fetched.GetBody(section)
 		if literal == nil {
 			continue
 		}
-		raw, err = io.ReadAll(io.LimitReader(literal, 20<<20))
+		raw, err = io.ReadAll(io.LimitReader(literal, maxMessageBodyBytes+1))
 		if err != nil {
 			return messageContent{}, err
+		}
+		if len(raw) > maxMessageBodyBytes {
+			raw = raw[:maxMessageBodyBytes]
+			truncated = true
 		}
 	}
 	if err := <-done; err != nil {
@@ -326,6 +333,13 @@ func (n nativeBackend) ReadMessageContent(ctx context.Context, msg message) (mes
 	content := extractReadableMessageContent(raw)
 	if strings.TrimSpace(content.Body) == "" {
 		content.Body = "(empty message)"
+	}
+	if truncated {
+		notice := "This message was larger than 20 MiB and only the first part was loaded."
+		if content.Notice != "" {
+			notice = content.Notice + " " + notice
+		}
+		content.Notice = notice
 	}
 	_ = store.saveBody(ctx, account.Name, mailbox, msg.ID, content.Body)
 	return content, nil
@@ -349,6 +363,51 @@ func (n nativeBackend) DeleteMessage(ctx context.Context, msg message) error {
 	return n.moveMessage(ctx, account, mailbox, msg, firstNonEmpty(account.TrashFolder, "Trash"))
 }
 
+func (n nativeBackend) MarkMessageRead(ctx context.Context, msg message) error {
+	return n.storeMessageFlags(ctx, msg, imap.AddFlags, "\\Seen", "mark email read")
+}
+
+func (n nativeBackend) MarkMessageUnread(ctx context.Context, msg message) error {
+	return n.storeMessageFlags(ctx, msg, imap.RemoveFlags, "\\Seen", "mark email unread")
+}
+
+func (n nativeBackend) SetMessageFlagged(ctx context.Context, msg message, flagged bool) error {
+	var op imap.FlagsOp = imap.AddFlags
+	label := "flag email"
+	if !flagged {
+		op = imap.RemoveFlags
+		label = "unflag email"
+	}
+	return n.storeMessageFlags(ctx, msg, op, "\\Flagged", label)
+}
+
+func (n nativeBackend) storeMessageFlags(ctx context.Context, msg message, op imap.FlagsOp, flag string, label string) error {
+	uid, err := messageIDUint(msg)
+	if err != nil {
+		return nil
+	}
+	store, account, mailbox, err := n.openStoreAndAccount(ctx)
+	if err != nil {
+		return err
+	}
+	defer store.close()
+	client, err := n.connectIMAP(ctx, account)
+	if err != nil {
+		return err
+	}
+	defer client.Logout()
+	if _, err := client.Select(mailbox, false); err != nil {
+		return fmt.Errorf("could not open %s: %w", mailbox, err)
+	}
+	seqset := new(imap.SeqSet)
+	seqset.AddNum(uid)
+	item := imap.FormatFlagsOp(op, true)
+	if err := client.UidStore(seqset, item, []interface{}{flag}, nil); err != nil {
+		return fmt.Errorf("could not %s: %w", label, err)
+	}
+	return nil
+}
+
 func (n nativeBackend) PrepareDraft(_ context.Context, req draftRequest) (string, error) {
 	store, account, _, err := n.openStoreAndAccount(context.Background())
 	if err != nil {
@@ -361,6 +420,9 @@ func (n nativeBackend) PrepareDraft(_ context.Context, req draftRequest) (string
 	}
 	if req.Kind == replyDraft {
 		return localReplyTemplate(req.Message, from), nil
+	}
+	if req.Kind == forwardDraft {
+		return localForwardTemplate(req.Message, from), nil
 	}
 	return localComposeTemplate(from), nil
 }
@@ -389,11 +451,48 @@ func (n nativeBackend) SendDraft(ctx context.Context, content string) error {
 		return err
 	}
 	addr := net.JoinHostPort(account.SMTPHost, fmt.Sprint(account.SMTPPort))
-	reader := strings.NewReader(smtpDraftContent(content))
+	payload := n.buildSMTPPayload(content, summary)
+	reader := strings.NewReader(payload)
 	if strings.EqualFold(account.SMTPSecurity, "tls") || account.SMTPPort == 465 {
 		return smtp.SendMailTLS(addr, auth, from, recipients, reader)
 	}
 	return smtp.SendMail(addr, auth, from, recipients, reader)
+}
+
+func (n nativeBackend) buildSMTPPayload(content string, summary draftSummary) string {
+	if n.composeFormat != "markdown" || !looksLikeMarkdown(summary.Body) {
+		return smtpDraftContent(content)
+	}
+	htmlBody := markdownToHTML(summary.Body)
+	return buildMultipartAlternative(summary, htmlBody)
+}
+
+func buildMultipartAlternative(summary draftSummary, htmlBody string) string {
+	boundary := "clibox-" + fmt.Sprintf("%x", time.Now().UnixNano())
+	var out strings.Builder
+	out.WriteString("From: " + safeHeaderValue(firstNonEmpty(summary.From, "")) + "\n")
+	out.WriteString("To: " + safeHeaderValue(summary.To) + "\n")
+	if strings.TrimSpace(summary.Cc) != "" {
+		out.WriteString("Cc: " + safeHeaderValue(summary.Cc) + "\n")
+	}
+	out.WriteString("Subject: " + safeHeaderValue(summary.Subject) + "\n")
+	out.WriteString("MIME-Version: 1.0\n")
+	out.WriteString("Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\n")
+	out.WriteString("\n")
+	out.WriteString("--" + boundary + "\n")
+	out.WriteString("Content-Type: text/plain; charset=utf-8\n")
+	out.WriteString("\n")
+	out.WriteString(strings.TrimRight(summary.Body, "\n") + "\n")
+	out.WriteString("\n")
+	out.WriteString("--" + boundary + "\n")
+	out.WriteString("Content-Type: text/html; charset=utf-8\n")
+	out.WriteString("\n")
+	out.WriteString("<html><body>\n")
+	out.WriteString(htmlBody)
+	out.WriteString("</body></html>\n")
+	out.WriteString("\n")
+	out.WriteString("--" + boundary + "--\n")
+	return out.String()
 }
 
 func (n nativeBackend) moveMessage(ctx context.Context, account nativeAccount, mailbox string, msg message, dest string) error {
@@ -549,14 +648,18 @@ func nativeEnvelopeMessage(fetched *imap.Message) message {
 		if msg.Email == "" {
 			msg.From, msg.Email = nativeAddress(fetched.Envelope.Sender)
 		}
+		msg.MessageID = strings.TrimSpace(fetched.Envelope.MessageId)
 	}
 	msg.From = firstNonEmpty(msg.From, msg.Email, "Unknown")
 	msg.Preview = "Flags: " + strings.Join(fetched.Flags, ", ")
 	msg.Unread = true
 	for _, flag := range fetched.Flags {
-		if strings.EqualFold(strings.TrimLeft(flag, "\\"), "Seen") {
+		clean := strings.TrimLeft(flag, "\\")
+		if strings.EqualFold(clean, "Seen") {
 			msg.Unread = false
-			break
+		}
+		if strings.EqualFold(clean, "Flagged") {
+			msg.Flagged = true
 		}
 	}
 	return msg

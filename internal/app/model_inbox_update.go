@@ -51,11 +51,15 @@ func (m model) handleInboxPageLoaded(msg inboxPageLoadedMsg) (model, tea.Cmd) {
 
 	m.loadedAll = false
 	m.nextPage = msg.page + 1
+	if restored, cmd, ok := m.restoreLastSessionAfterLoad(); ok {
+		return restored.withSessionSave(cmd)
+	}
 	if wasLoadingMore && wasAtEnd && msg.page > 1 {
 		return m.continueOlderMailLoad(addedCount)
 	}
 	m = m.withStatus(fmt.Sprintf("loaded %d emails from %s; press j at the bottom for older mail", len(m.messages), m.scopeLabel()))
-	return m.previewSelectedMessage()
+	m, cmd := m.previewSelectedMessage()
+	return m.withSessionSave(cmd)
 }
 
 func (m model) handleInboxPageError(msg inboxPageLoadedMsg) (model, tea.Cmd) {
@@ -115,8 +119,12 @@ func (m model) handleInboxLoaded(msg inboxLoadedMsg) (model, tea.Cmd) {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
+	if restored, cmd, ok := m.restoreLastSessionAfterLoad(); ok {
+		return restored.withSessionSave(cmd)
+	}
 	m = m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.scopeLabel()))
-	return m.previewSelectedMessage()
+	m, cmd := m.previewSelectedMessage()
+	return m.withSessionSave(cmd)
 }
 
 func (m model) finishInboxLoad() (model, tea.Cmd) {
@@ -125,8 +133,12 @@ func (m model) finishInboxLoad() (model, tea.Cmd) {
 	if len(m.messages) == 0 {
 		return m.withStatus(m.emptyInboxStatus()), nil
 	}
+	if restored, cmd, ok := m.restoreLastSessionAfterLoad(); ok {
+		return restored.withSessionSave(cmd)
+	}
 	m = m.withStatus(fmt.Sprintf("loaded %d emails from %s", len(m.messages), m.scopeLabel()))
-	return m.previewSelectedMessage()
+	m, cmd := m.previewSelectedMessage()
+	return m.withSessionSave(cmd)
 }
 
 func (m model) emptyInboxStatus() string {
@@ -169,7 +181,7 @@ func (m model) handleMessageBodyLoaded(msg messageBodyLoadedMsg) (model, tea.Cmd
 		}
 		return m.withStatus("could not preview email: " + oneLine(msg.err.Error())), nil
 	}
-	m = m.setMessageContent(msg.id, messageContent{Body: msg.body, Images: msg.images})
+	m = m.setMessageContent(msg.id, messageContent{Body: msg.body, Images: msg.images, Notice: msg.notice})
 	if m.mode == readerView {
 		return m.withStatus("email loaded"), nil
 	}

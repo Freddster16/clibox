@@ -35,6 +35,12 @@ type messageActionBackend interface {
 	DeleteMessage(context.Context, message) error
 }
 
+type messageFlagBackend interface {
+	MarkMessageRead(context.Context, message) error
+	MarkMessageUnread(context.Context, message) error
+	SetMessageFlagged(context.Context, message, bool) error
+}
+
 type draftBackend interface {
 	PrepareDraft(context.Context, draftRequest) (string, error)
 	SendDraft(context.Context, string) error

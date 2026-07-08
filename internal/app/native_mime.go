@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"html"
 	"io"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 const (
 	maxMessageImages    = 1
 	maxInlineImageBytes = 2 << 20
+	maxMessageBodyBytes = 20 << 20
 )
 
 func extractReadableMessageBody(raw []byte) string {
@@ -32,6 +34,7 @@ func extractReadableMessageContent(raw []byte) messageContent {
 	var plainParts []string
 	var htmlParts []string
 	var images []messageImage
+	droppedImages := 0
 	for {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
@@ -55,21 +58,29 @@ func extractReadableMessageContent(raw []byte) messageContent {
 			htmlParts = append(htmlParts, htmlToText(string(body)))
 		default:
 			if strings.HasPrefix(strings.ToLower(mediaType), "image/") {
-				images = appendMessageImage(images, messageImage{
-					Name:        firstNonEmpty(name, "inline image"),
-					ContentType: mediaType,
-					Data:        body,
-				})
+				if len(images) >= maxMessageImages || len(body) > maxInlineImageBytes {
+					droppedImages++
+				} else {
+					images = appendMessageImage(images, messageImage{
+						Name:        firstNonEmpty(name, "inline image"),
+						ContentType: mediaType,
+						Data:        body,
+					})
+				}
 			}
 		}
 	}
+	notice := ""
+	if droppedImages > 0 {
+		notice = fmt.Sprintf("%d inline image(s) were not shown (size or count limit reached).", droppedImages)
+	}
 	if text := strings.TrimSpace(strings.Join(nonEmpty(plainParts...), "\n\n")); text != "" {
-		return messageContent{Body: text, Images: images}
+		return messageContent{Body: text, Images: images, Notice: notice}
 	}
 	if text := strings.TrimSpace(strings.Join(nonEmpty(htmlParts...), "\n\n")); text != "" {
-		return messageContent{Body: text, Images: images}
+		return messageContent{Body: text, Images: images, Notice: notice}
 	}
-	return messageContent{Body: normalizeMessageBody(raw), Images: images}
+	return messageContent{Body: normalizeMessageBody(raw), Images: images, Notice: notice}
 }
 
 func partContentInfo(header any) (string, string) {
@@ -103,12 +114,34 @@ func appendMessageImage(images []messageImage, image messageImage) []messageImag
 	return append(images, image)
 }
 
+var (
+	htmlScriptRE    = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
+	htmlStyleRE     = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+	htmlParaCloseRE = regexp.MustCompile(`(?i)</(p|h[1-6]|blockquote|div|section|article|header|footer|pre)>`)
+	htmlLineCloseRE = regexp.MustCompile(`(?i)</(li|tr|ul|ol|table)>`)
+	htmlBrRE        = regexp.MustCompile(`(?i)<br\s*/?>`)
+	htmlTagRE       = regexp.MustCompile(`(?s)<[^>]+>`)
+	htmlBlankLinRE  = regexp.MustCompile(`\n{3,}`)
+)
+
 func htmlToText(input string) string {
-	input = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`).ReplaceAllString(input, "")
-	input = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`).ReplaceAllString(input, "")
-	input = regexp.MustCompile(`(?i)<br\s*/?>`).ReplaceAllString(input, "\n")
-	input = regexp.MustCompile(`(?i)</p\s*>`).ReplaceAllString(input, "\n\n")
-	input = regexp.MustCompile(`(?s)<[^>]+>`).ReplaceAllString(input, " ")
+	input = htmlScriptRE.ReplaceAllString(input, "")
+	input = htmlStyleRE.ReplaceAllString(input, "")
+	input = htmlParaCloseRE.ReplaceAllString(input, "\n\n")
+	input = htmlLineCloseRE.ReplaceAllString(input, "\n")
+	input = htmlBrRE.ReplaceAllString(input, "\n")
+	input = htmlTagRE.ReplaceAllString(input, " ")
 	input = html.UnescapeString(input)
-	return strings.Join(strings.Fields(input), " ")
+	return normalizeHTMLText(input)
+}
+
+func normalizeHTMLText(input string) string {
+	lines := strings.Split(input, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.Join(strings.Fields(line), " ")
+		out = append(out, line)
+	}
+	normalized := htmlBlankLinRE.ReplaceAllString(strings.Join(out, "\n"), "\n\n")
+	return strings.TrimSpace(normalized)
 }

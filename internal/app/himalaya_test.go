@@ -428,6 +428,50 @@ func TestHimalayaBackendArchiveFallsBackToV2Shape(t *testing.T) {
 	}
 }
 
+func TestHimalayaBackendMarksMessageRead(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{{stdout: []byte("flagged")}}}
+	backend := himalayaBackend{
+		binary:  "himalaya",
+		account: "personal",
+		mailbox: "INBOX",
+		runner:  runner,
+	}
+
+	if err := backend.MarkMessageRead(context.Background(), message{ID: "42"}); err != nil {
+		t.Fatalf("expected mark-read to succeed: %v", err)
+	}
+	want := "himalaya flag add 42 --flag seen --account personal --folder INBOX"
+	if len(runner.calls) != 1 || runner.calls[0] != want {
+		t.Fatalf("unexpected mark-read command:\nwant %q\ngot  %v", want, runner.calls)
+	}
+}
+
+func TestHimalayaBackendMarkReadFallsBackToV2Shape(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{
+			stderr: []byte("error: unrecognized subcommand 'flag'"),
+			err:    errors.New("exit status 2"),
+		},
+		{
+			stdout: []byte("flagged"),
+		},
+	}}
+	backend := himalayaBackend{
+		binary:  "himalaya",
+		account: "personal",
+		mailbox: "INBOX",
+		runner:  runner,
+	}
+
+	if err := backend.MarkMessageRead(context.Background(), message{ID: "42"}); err != nil {
+		t.Fatalf("expected fallback mark-read to succeed: %v", err)
+	}
+	want := "himalaya flag add --flag seen 42 --account personal --mailbox INBOX"
+	if len(runner.calls) != 2 || runner.calls[1] != want {
+		t.Fatalf("unexpected fallback mark-read command:\nwant %q\ngot  %v", want, runner.calls)
+	}
+}
+
 func TestHimalayaBackendDoesNotFallbackOnRuntimeFailure(t *testing.T) {
 	runner := &fakeCommandRunner{results: []fakeCommandResult{
 		{
